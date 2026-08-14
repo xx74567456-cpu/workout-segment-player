@@ -11,12 +11,16 @@
   },
   "dependencies": {
     "@capacitor/core": "^8.5.0",
+    "@capacitor/screen-orientation": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.3",
     "vue": "^3.5.13"
   },
   "devDependencies": {
     "@capacitor/android": "^8.5.0",
     "@capacitor/cli": "^8.5.0",
     "@vitejs/plugin-vue": "^5.2.1",
+    "sharp": "^0.35.3",
+    "typescript": "^7.0.2",
     "vite": "^6.0.7",
     "vite-plugin-pwa": "^0.21.1"
   }

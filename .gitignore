@@ -12,3 +12,6 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 *.log
+
+# APK 安装包（构建产物，不入库）
+*.apk

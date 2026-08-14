@@ -3,6 +3,8 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { addCheckin, getAllCheckins, deleteCheckinsByVideo } from '../db'
 import { store, closePlayer } from '../store'
 import { formatTime, todayStr } from '../utils'
+import { ScreenOrientation } from '@capacitor/screen-orientation'
+import { StatusBar } from '@capacitor/status-bar'
 
 const video = computed(() => store.playerVideo)
 const segments = computed(() => video.value?.segments || [])
@@ -152,20 +154,34 @@ function toggleRateMenu() {
   scheduleAutoHide()
 }
 
-/** 切换全屏（整个播放器进入系统全屏） */
-async function toggleFullscreen() {
-  const el = playerEl.value
-  if (!el) return
-  if (!document.fullscreenElement) {
-    await el.requestFullscreen?.().catch(() => {})
-  } else {
-    await document.exitFullscreen?.().catch(() => {})
-  }
-  scheduleAutoHide()
+/** 判断视频是否为横屏（宽 > 高） */
+function videoIsLandscape() {
+  const v = videoEl.value
+  if (v && v.videoWidth && v.videoHeight) return v.videoWidth > v.videoHeight
+  return true
 }
 
-function onFullscreenChange() {
-  isFullscreen.value = !!document.fullscreenElement
+/** 切换全屏：横屏视频锁横屏、竖屏视频锁竖屏，并隐藏状态栏实现沉浸全屏 */
+async function toggleFullscreen() {
+  if (!isFullscreen.value) {
+    const landscape = videoIsLandscape()
+    try {
+      await ScreenOrientation.lock({ orientation: landscape ? 'landscape' : 'portrait' })
+    } catch {}
+    try {
+      await StatusBar.hide()
+    } catch {}
+    isFullscreen.value = true
+  } else {
+    try {
+      await ScreenOrientation.unlock()
+    } catch {}
+    try {
+      await StatusBar.show()
+    } catch {}
+    isFullscreen.value = false
+  }
+  scheduleAutoHide()
 }
 
 /** 核心循环逻辑：当前段到末尾时跳回段首，实现单段循环 */
@@ -306,7 +322,6 @@ onMounted(() => {
       { once: true }
     )
   }
-  document.addEventListener('fullscreenchange', onFullscreenChange)
   loadCheckinCount()
   scheduleAutoHide()
 })
@@ -314,8 +329,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   // 关闭前保存本次播放记录
   saveProgress()
+  // 退出播放器时恢复屏幕方向与状态栏，避免 App 停留在横屏
+  ScreenOrientation.unlock().catch(() => {})
+  StatusBar.show().catch(() => {})
   if (url.value) URL.revokeObjectURL(url.value)
-  document.removeEventListener('fullscreenchange', onFullscreenChange)
   if (clickTimer) clearTimeout(clickTimer)
   if (hideTimer) clearTimeout(hideTimer)
 })
