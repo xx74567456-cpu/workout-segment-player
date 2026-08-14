@@ -196,6 +196,13 @@ const bubbleLayerHeight = computed(() => {
   return (max + 1) * 18 + 'px'
 })
 
+/** 按时间顺序给「未命名」的动作段重编号为「动作 N」（数组已按时间先后排序） */
+function renumberSegments() {
+  segments.value = segments.value.map((s, i) =>
+    !s.name || /^动作\s*\d+$/.test(s.name.trim()) ? { ...s, name: `动作 ${i + 1}` } : s
+  )
+}
+
 /** 在当前播放位置切分 */
 function splitAtCurrent() {
   const t = videoEl.value.currentTime
@@ -208,6 +215,7 @@ function splitAtCurrent() {
   const left = { ...seg, end: t }
   const right = { id: uid(), name: `动作 ${segments.value.length + 1}`, start: t, end: seg.end }
   segments.value.splice(idx, 1, left, right)
+  renumberSegments()
   selectedIndex.value = idx
 }
 
@@ -225,6 +233,7 @@ function removeSegment(i) {
     segs[i - 1].end = segs[i].end
     segs.splice(i, 1)
   }
+  renumberSegments()
   selectedIndex.value = -1
 }
 
@@ -249,9 +258,14 @@ async function save() {
     alert('请先切分出一个有效动作段')
     return
   }
+  // 按时间先后排序，并重编号「未命名」的动作名（用户自定义名保留）
+  const sorted = [...valid].sort((a, b) => a.start - b.start)
+  const normalized = sorted.map((s, i) =>
+    !s.name || /^动作\s*\d+$/.test(s.name.trim()) ? { ...s, name: `动作 ${i + 1}` } : s
+  )
   saving.value = true
   try {
-    video.value.segments = valid
+    video.value.segments = normalized
     await updateVideo(video.value)
     showToast('保存成功 ✅')
     // 短暂停留让用户看到提示，再关闭编辑器

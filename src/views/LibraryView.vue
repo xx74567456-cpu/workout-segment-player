@@ -14,6 +14,7 @@ import { formatTime } from '../utils'
 const videos = ref([])
 const folders = ref([])
 const importing = ref(false)
+const editingId = ref(null)
 
 const filteredVideos = computed(() => {
   if (!store.activeFolderId) return videos.value
@@ -109,6 +110,17 @@ async function changeFolder(v, folderId) {
   v.folderId = folderId || null
   await updateVideo(v)
 }
+
+// ---------- 重命名 ----------
+function startRename(v) {
+  editingId.value = v.id
+}
+
+async function saveRename(v) {
+  editingId.value = null
+  v.name = (v.name || '').trim() || '未命名'
+  await updateVideo(v)
+}
 </script>
 
 <template>
@@ -151,9 +163,20 @@ async function changeFolder(v, folderId) {
           <span v-if="v.segments?.length" class="badge">{{ v.segments.length }} 段</span>
         </div>
         <div class="card-body">
-          <div class="name" @click="openPlayer(v)">{{ v.name }}</div>
+          <input
+            v-if="editingId === v.id"
+            v-model="v.name"
+            class="name-input"
+            placeholder="视频名"
+            autofocus
+            @keyup.enter="saveRename(v)"
+            @blur="saveRename(v)"
+            @click.stop
+          />
+          <div v-else class="name" @click="openPlayer(v)">{{ v.name }}</div>
           <div class="actions">
             <button class="action-btn" @click="openEditor(v)">✂️ 编辑</button>
+            <button class="action-btn" title="重命名" @click="startRename(v)">✏️</button>
             <select
               class="folder-select"
               :value="v.folderId || ''"
@@ -298,6 +321,18 @@ async function changeFolder(v, folderId) {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.name-input {
+  width: 100%;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 4px 6px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text);
   margin-bottom: 6px;
 }
 

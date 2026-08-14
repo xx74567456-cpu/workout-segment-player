@@ -160,3 +160,19 @@ export function addCheckin(checkin) {
     req.onsuccess = () => setOut(req.result)
   })
 }
+
+/** 删除指定视频的全部打卡记录（用于「清除打卡次数」） */
+export function deleteCheckinsByVideo(videoId) {
+  return run(STORE_CHECKINS, 'readwrite', (store) => {
+    const req = store.openCursor()
+    req.onsuccess = (e) => {
+      const cursor = e.target.result
+      if (cursor) {
+        if (cursor.value.videoId === videoId) {
+          cursor.delete()
+        }
+        cursor.continue()
+      }
+    }
+  })
+}
