@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/workout-segment-player/sw.js', { scope: '/workout-segment-player/' })})}

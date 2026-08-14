@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="115" fill="#10b981"/>
+  <g fill="#ffffff">
+    <!-- 哑铃横杆 -->
+    <rect x="200" y="246" width="112" height="20" rx="8"/>
+    <!-- 左端内块 / 外块 -->
+    <rect x="180" y="216" width="20" height="80" rx="6"/>
+    <rect x="150" y="206" width="30" height="100" rx="10"/>
+    <!-- 右端内块 / 外块 -->
+    <rect x="312" y="216" width="20" height="80" rx="6"/>
+    <rect x="332" y="206" width="30" height="100" rx="10"/>
+  </g>
+</svg>
