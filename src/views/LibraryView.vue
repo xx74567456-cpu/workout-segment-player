@@ -1,32 +1,64 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import {
   getAllVideos,
   addVideo,
   deleteVideo,
   updateVideo,
   getAllFolders,
+  getAllCheckins,
   uid,
 } from '../db'
-import { store, openPlayer, openEditor } from '../store'
+import { store, openPlayer, openEditor, showToast } from '../store'
 import { formatTime } from '../utils'
 
 const videos = ref([])
 const folders = ref([])
+const checkins = ref([])
 const importing = ref(false)
 const editingId = ref(null)
+
+// 右键 / 长按操作菜单
+const menuVideo = ref(null)
+const deleteTarget = ref(null)
 
 const filteredVideos = computed(() => {
   if (!store.activeFolderId) return videos.value
   return videos.value.filter((v) => v.folderId === store.activeFolderId)
 })
 
+// 每个视频的打卡次数（videoId → 次数），一次性预计算避免模板里反复遍历
+const checkinCountMap = computed(() => {
+  const map = {}
+  for (const c of checkins.value) {
+    map[c.videoId] = (map[c.videoId] || 0) + 1
+  }
+  return map
+})
+
+function checkinCount(videoId) {
+  return checkinCountMap.value[videoId] || 0
+}
+
 async function load() {
   videos.value = await getAllVideos()
   folders.value = await getAllFolders()
+  checkins.value = await getAllCheckins()
 }
 
 onMounted(load)
+
+// 关闭播放器后刷新打卡次数（刚打完卡可能已新增）
+watch(
+  () => store.playerVideo,
+  (nv, ov) => {
+    if (ov && !nv) {
+      getAllCheckins().then((list) => {
+        checkins.value = list
+      })
+    }
+  }
+)
 
 // ---------- 导入 ----------
 const fileInput = ref(null)
@@ -101,7 +133,6 @@ function readVideoMeta(file) {
 
 // ---------- 操作 ----------
 async function removeVideo(v) {
-  if (!confirm(`确定删除「${v.name}」？删除后不可恢复。`)) return
   await deleteVideo(v.id)
   await load()
 }
@@ -109,6 +140,84 @@ async function removeVideo(v) {
 async function changeFolder(v, folderId) {
   v.folderId = folderId || null
   await updateVideo(v)
+}
+
+// ---------- 右键 / 长按菜单 ----------
+
+let pressTimer = null
+let longPressed = false
+
+/** 按下开始计时，500ms 后触发长按菜单 */
+function startPress(v) {
+  longPressed = false
+  if (pressTimer) clearTimeout(pressTimer)
+  pressTimer = setTimeout(() => {
+    longPressed = true
+    openMenu(v)
+  }, 500)
+}
+
+function cancelPress() {
+  if (pressTimer) clearTimeout(pressTimer)
+  pressTimer = null
+}
+
+function openMenu(v) {
+  menuVideo.value = v
+}
+
+function closeMenu() {
+  menuVideo.value = null
+}
+
+function onContextMenu(v) {
+  openMenu(v)
+}
+
+/** 缩略图/标题点击：长按之后不触发播放 */
+function onThumbClick(v) {
+  if (longPressed) {
+    longPressed = false
+    return
+  }
+  openPlayer(v)
+}
+
+function onEditClick(v) {
+  if (longPressed) {
+    longPressed = false
+    return
+  }
+  openEditor(v)
+}
+
+function menuRename() {
+  const v = menuVideo.value
+  closeMenu()
+  if (v) startRename(v)
+}
+
+async function moveToFolder(folderId) {
+  const v = menuVideo.value
+  if (!v) return
+  await changeFolder(v, folderId)
+  showToast('已移动分类')
+}
+
+function askDelete() {
+  const v = menuVideo.value
+  closeMenu()
+  deleteTarget.value = v
+}
+
+async function doDelete() {
+  const v = deleteTarget.value
+  deleteTarget.value = null
+  if (v) await removeVideo(v)
+}
+
+function cancelDelete() {
+  deleteTarget.value = null
 }
 
 // ---------- 重命名 ----------
@@ -155,12 +264,22 @@ async function saveRename(v) {
 
     <!-- 视频列表 -->
     <div v-if="filteredVideos.length" class="grid">
-      <div v-for="v in filteredVideos" :key="v.id" class="card">
-        <div class="thumb" @click="openPlayer(v)">
+      <div
+        v-for="v in filteredVideos"
+        :key="v.id"
+        class="card"
+        @pointerdown="startPress(v)"
+        @pointerup="cancelPress"
+        @pointercancel="cancelPress"
+        @pointerleave="cancelPress"
+        @contextmenu.prevent="onContextMenu(v)"
+      >
+        <div class="thumb" @click="onThumbClick(v)">
           <img v-if="v.thumbnail" :src="v.thumbnail" alt="" />
           <div v-else class="thumb-placeholder">🎬</div>
           <span class="duration">{{ formatTime(v.duration) }}</span>
           <span v-if="v.segments?.length" class="badge">{{ v.segments.length }} 段</span>
+          <span class="checkin-badge" :class="{ zero: checkinCount(v.id) === 0 }">🏁 {{ checkinCount(v.id) }}</span>
         </div>
         <div class="card-body">
           <input
@@ -171,21 +290,12 @@ async function saveRename(v) {
             autofocus
             @keyup.enter="saveRename(v)"
             @blur="saveRename(v)"
+            @pointerdown.stop
             @click.stop
           />
-          <div v-else class="name" @click="openPlayer(v)">{{ v.name }}</div>
+          <div v-else class="name" @click="onThumbClick(v)">{{ v.name }}</div>
           <div class="actions">
-            <button class="action-btn" @click="openEditor(v)">✂️ 编辑</button>
-            <button class="action-btn" title="重命名" @click="startRename(v)">✏️</button>
-            <select
-              class="folder-select"
-              :value="v.folderId || ''"
-              @change="changeFolder(v, $event.target.value)"
-            >
-              <option value="">未分类</option>
-              <option v-for="f in folders" :key="f.id" :value="f.id">{{ f.name }}</option>
-            </select>
-            <button class="action-btn danger" @click="removeVideo(v)">🗑</button>
+            <button class="edit-btn" @click="onEditClick(v)">✂️ 编辑分段</button>
           </div>
         </div>
       </div>
@@ -196,6 +306,67 @@ async function saveRename(v) {
       <p>还没有视频</p>
       <p class="dim">点击右上角「导入视频」，选择你下载好的健身视频开始吧</p>
     </div>
+
+    <!-- 右键 / 长按操作菜单 -->
+    <teleport to="body">
+      <div v-if="menuVideo" class="sheet-overlay" @click.self="closeMenu">
+        <div class="sheet">
+          <div class="sheet-name">{{ menuVideo.name }}</div>
+          <div class="sheet-menu">
+            <button class="menu-item" @click="menuRename">
+              <span class="menu-icon">✏️</span>
+              <span class="menu-text">
+                <span class="menu-title">重命名</span>
+                <span class="menu-desc">修改视频名称</span>
+              </span>
+            </button>
+            <div class="menu-item folder-item">
+              <span class="menu-icon">📁</span>
+              <span class="menu-text">
+                <span class="menu-title">移动到分类</span>
+                <span class="menu-desc">选择目标文件夹</span>
+              </span>
+            </div>
+            <div class="folder-options">
+              <button
+                class="folder-opt"
+                :class="{ active: menuVideo.folderId == null }"
+                @click="moveToFolder(null)"
+              >
+                未分类
+              </button>
+              <button
+                v-for="f in folders"
+                :key="f.id"
+                class="folder-opt"
+                :class="{ active: menuVideo.folderId === f.id }"
+                @click="moveToFolder(f.id)"
+              >
+                {{ f.name }}
+              </button>
+            </div>
+            <button class="menu-item danger" @click="askDelete">
+              <span class="menu-icon">🗑</span>
+              <span class="menu-text">
+                <span class="menu-title">删除视频</span>
+                <span class="menu-desc">删除后不可恢复</span>
+              </span>
+            </button>
+          </div>
+          <button class="sheet-cancel" @click="closeMenu">取消</button>
+        </div>
+      </div>
+
+      <!-- 删除二次确认 -->
+      <div v-if="deleteTarget" class="sheet-overlay" @click.self="cancelDelete">
+        <div class="sheet confirm">
+          <div class="sheet-name">删除视频？</div>
+          <p class="confirm-text">「{{ deleteTarget.name }}」删除后不可恢复，确定删除吗？</p>
+          <button class="confirm-danger" @click="doDelete">确认删除</button>
+          <button class="sheet-cancel" @click="cancelDelete">取消</button>
+        </div>
+      </div>
+    </teleport>
   </div>
 </template>
 
@@ -263,6 +434,10 @@ async function saveRename(v) {
   background: var(--bg-elevated);
   border-radius: var(--radius);
   overflow: hidden;
+  /* 长按唤起菜单时避免选中文本 / 弹系统菜单 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .thumb {
@@ -310,6 +485,23 @@ async function saveRename(v) {
   font-size: 11px;
 }
 
+/* 打卡次数角标：右上角，金色表示已打卡、灰色表示 0 次 */
+.checkin-badge {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fbbf24;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.checkin-badge.zero {
+  color: #94a3b8;
+}
+
 .card-body {
   padding: 8px 10px;
 }
@@ -338,31 +530,17 @@ async function saveRename(v) {
 
 .actions {
   display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
-.action-btn {
-  font-size: 12px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-}
-
-.action-btn.danger {
-  color: var(--danger);
-}
-
-.folder-select {
+.edit-btn {
   flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  padding: 4px;
-  border-radius: 6px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #06281c;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
 }
 
 .empty {
@@ -380,5 +558,137 @@ async function saveRename(v) {
   font-size: 13px;
   margin-top: 6px;
   opacity: 0.7;
+}
+
+/* 右键/长按菜单与删除确认面板（居中） */
+.sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.sheet {
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg-elevated);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sheet-name {
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 每个功能项：统一为「图标 + 标题 + 描述」的列表项 */
+.sheet-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.menu-item.danger {
+  border-color: var(--danger);
+}
+
+.menu-icon {
+  flex-shrink: 0;
+  width: 30px;
+  font-size: 20px;
+  text-align: center;
+}
+
+.menu-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.menu-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.menu-item.danger .menu-title {
+  color: var(--danger);
+}
+
+.menu-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.folder-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 6px 4px;
+}
+
+.folder-opt {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.folder-opt.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #06281c;
+  font-weight: 600;
+}
+
+.sheet-cancel {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 15px;
+  color: var(--text-dim);
+}
+
+.confirm-text {
+  text-align: center;
+  font-size: 14px;
+  color: var(--text-dim);
+  padding: 0 4px 4px;
+}
+
+.confirm-danger {
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
 }
 </style>

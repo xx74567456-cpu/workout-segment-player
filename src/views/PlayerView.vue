@@ -1,10 +1,11 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { addCheckin, getAllCheckins, deleteCheckinsByVideo } from '../db'
-import { store, closePlayer } from '../store'
+import { store, closePlayer, showToast } from '../store'
 import { formatTime, todayStr } from '../utils'
 import { ScreenOrientation } from '@capacitor/screen-orientation'
 import { StatusBar } from '@capacitor/status-bar'
+import { useVoiceControl } from '../composables/useVoiceControl'
 
 const video = computed(() => store.playerVideo)
 const segments = computed(() => video.value?.segments || [])
@@ -25,6 +26,18 @@ const playing = ref(false)
 const rate = ref(1)
 const RATES = [0.75, 1, 1.5, 2, 3, 4, 5]
 const rateMenuOpen = ref(false)
+// 音量（0~1），由进度条旁的音量按钮调节；持久化到 localStorage 记忆上次设置
+const VOLUME_KEY = 'fit-segment:volume'
+function readVolume() {
+  try {
+    const v = parseFloat(localStorage.getItem(VOLUME_KEY))
+    return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 1
+  } catch {
+    return 1
+  }
+}
+const volume = ref(readVolume())
+const volumeMenuOpen = ref(false)
 const duration = ref(0)
 const playerEl = ref(null)
 const isFullscreen = ref(false)
@@ -61,21 +74,28 @@ function playCurrent() {
   const seg = currentSegment.value
   v.currentTime = seg ? seg.start : 0
   currentTime.value = v.currentTime
+  // 播放状态交由 @play/@pause 事件同步；自动播放可能被浏览器拦截（非静音视频需用户手势）
   v.play().catch(() => {})
-  playing.value = true
 }
 
 function togglePlay() {
   const v = videoEl.value
   if (!v) return
   if (v.paused) {
-    v.play().catch(() => {})
-    playing.value = true
+    v.play().catch((err) => {
+      // 用户主动点播放仍失败，说明视频本身有问题（编码不支持 / 数据损坏）
+      console.error('播放失败', err)
+      showToast('视频无法播放，请重新导入该视频', 2500)
+    })
   } else {
     v.pause()
-    playing.value = false
   }
   scheduleAutoHide()
+}
+
+/** 视频加载失败时给出明确提示，便于区分「加载失败」和「自动播放被拦截」 */
+function onVideoError() {
+  showToast('视频加载失败，请重新导入该视频', 2500)
 }
 
 let clickTimer = null
@@ -132,12 +152,39 @@ function seekTo(t) {
   currentTime.value = t
 }
 
-/** 点击进度条跳转到指定时间 */
-function onSeekClick(e) {
+// 拖动进度条状态
+const dragging = ref(false)
+
+/** 由指针位置换算目标时间（秒） */
+function timeFromPointer(e) {
   const track = e.currentTarget
   const rect = track.getBoundingClientRect()
   const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
-  seekTo(ratio * (videoEl.value.duration || duration.value))
+  return ratio * (videoEl.value.duration || duration.value || 0)
+}
+
+/** 按下：开始拖动，实时预览进度 */
+function onSeekPointerDown(e) {
+  dragging.value = true
+  try {
+    e.currentTarget.setPointerCapture(e.pointerId)
+  } catch {
+    /* 某些环境不支持 pointer capture，忽略 */
+  }
+  currentTime.value = timeFromPointer(e)
+}
+
+/** 拖动中：更新预览进度 */
+function onSeekPointerMove(e) {
+  if (!dragging.value) return
+  currentTime.value = timeFromPointer(e)
+}
+
+/** 松手：定位到最终时间点 */
+function onSeekPointerUp(e) {
+  if (!dragging.value) return
+  dragging.value = false
+  seekTo(timeFromPointer(e))
   scheduleAutoHide()
 }
 
@@ -152,6 +199,29 @@ function setRate(r) {
 function toggleRateMenu() {
   rateMenuOpen.value = !rateMenuOpen.value
   scheduleAutoHide()
+}
+
+function toggleVolumeMenu() {
+  volumeMenuOpen.value = !volumeMenuOpen.value
+  scheduleAutoHide()
+}
+
+/** 把当前音量应用到视频元素 */
+function applyVolume() {
+  const v = videoEl.value
+  if (!v) return
+  v.volume = volume.value
+  v.muted = volume.value === 0
+}
+
+/** 拖动音量滑块时实时应用到视频，并记忆到 localStorage */
+function onVolumeInput() {
+  applyVolume()
+  try {
+    localStorage.setItem(VOLUME_KEY, String(volume.value))
+  } catch {
+    /* localStorage 不可用时静默失败 */
+  }
 }
 
 /** 判断视频是否为横屏（宽 > 高） */
@@ -187,13 +257,70 @@ async function toggleFullscreen() {
 /** 核心循环逻辑：当前段到末尾时跳回段首，实现单段循环 */
 function onTimeUpdate() {
   const v = videoEl.value
+  // 拖动进度条期间暂停自动更新，避免预览位置被播放进度覆盖
+  if (dragging.value) return
   currentTime.value = v.currentTime
   const seg = currentSegment.value
   if (seg) {
-    if (v.currentTime >= seg.end) v.currentTime = seg.start
+    if (v.currentTime >= seg.end) {
+      v.currentTime = seg.start
+      playReplayBeep() // 单段循环：当前动作重播
+    }
   } else if (v.duration && v.currentTime >= v.duration - 0.1) {
     v.currentTime = 0
+    playReplayBeep() // 无分段：整段重播
   }
+}
+
+// ---------- 音效 ----------
+
+let audioCtx = null
+
+/** 获取（并唤醒）共用的 AudioContext，不可用时返回 null */
+function ensureAudio() {
+  try {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext
+      if (!AC) return null
+      audioCtx = new AC()
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+    return audioCtx
+  } catch {
+    return null
+  }
+}
+
+/** 合成一个短促提示音（delay 秒后响起，可叠加实现双音） */
+function tone(freq, { duration = 0.12, type = 'sine', volume = 0.18, delay = 0 } = {}) {
+  const ctx = ensureAudio()
+  if (!ctx) return
+  try {
+    const t0 = ctx.currentTime + delay
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = type
+    osc.frequency.value = freq
+    gain.gain.setValueAtTime(volume, t0)
+    gain.gain.exponentialRampToValueAtTime(0.001, t0 + duration)
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(t0)
+    osc.stop(t0 + duration)
+  } catch {
+    // 音频不可用时静默失败
+  }
+}
+
+/** 切换动作：单声「滴」，音调随方向（上高下低） */
+function playSwitchBeep(freq) {
+  tone(freq)
+}
+
+/** 动作重播：两个短促「滴滴」，三角波音色，与切换的单声区分 */
+function playReplayBeep() {
+  tone(523, { duration: 0.07, type: 'triangle' })
+  tone(523, { duration: 0.07, type: 'triangle', delay: 0.15 })
 }
 
 function next() {
@@ -206,6 +333,7 @@ function next() {
   if (currentIndex.value < segments.value.length - 1) {
     currentIndex.value++
     playCurrent()
+    playSwitchBeep(880) // 下一个动作：上行音
   } else {
     // 最后一段练完
     finish()
@@ -214,16 +342,28 @@ function next() {
 }
 
 function prev() {
+  if (!hasSegments.value) {
+    // 无分段：整段循环，「后退」等价于重播当前，保证有响应
+    playCurrent()
+    scheduleAutoHide()
+    return
+  }
   if (currentIndex.value > 0) {
     currentIndex.value--
-    playCurrent()
+  } else {
+    // 已在第一个动作：循环到最后一个，保证「后退」始终有响应
+    currentIndex.value = segments.value.length - 1
   }
+  playCurrent()
+  playSwitchBeep(660) // 上一个动作：下行音
   scheduleAutoHide()
 }
 
 function jumpTo(i) {
+  const changed = i !== currentIndex.value
   currentIndex.value = i
   playCurrent()
+  if (changed) playSwitchBeep(760) // 点击跳转：中性音
   scheduleAutoHide()
 }
 
@@ -268,6 +408,62 @@ async function clearCheckins() {
   }
 }
 
+// ---------- 语音控制 ----------
+
+const voice = useVoiceControl()
+const voiceListening = computed(() => voice.isListening.value)
+const voiceSupported = computed(() => voice.supported.value)
+const VOICE_LABEL = { next: '前进', prev: '后退', play: '播放', pause: '暂停' }
+
+/** 语音命令命中后，复用现有的 next / prev / togglePlay 逻辑 */
+function handleVoiceCommand(cmd) {
+  if (cmd === 'next') {
+    next()
+  } else if (cmd === 'prev') {
+    prev()
+  } else if (cmd === 'play') {
+    if (videoEl.value?.paused) togglePlay()
+  } else if (cmd === 'pause') {
+    if (!videoEl.value?.paused) togglePlay()
+  }
+  showToast(`🎤 ${VOICE_LABEL[cmd]}`)
+  scheduleAutoHide()
+}
+
+// 语音开启前的音量：语音识别期间临时调低视频音量、关闭时恢复，
+// 减少视频背景音被麦克风拾取导致的误识别（非静音，只是变小声）
+let volumeBeforeVoice = null
+
+/** 顶栏麦克风按钮：手动开关持续监听 */
+async function toggleVoice() {
+  if (voice.isListening.value) {
+    voice.stop()
+    if (volumeBeforeVoice !== null) {
+      volume.value = volumeBeforeVoice
+      applyVolume()
+      volumeBeforeVoice = null
+    }
+    showToast('🎤 语音已关闭')
+  } else {
+    await voice.start()
+    // 仅当语音真正开启成功时才降低视频音量，避免启动失败时音量被误降
+    if (voice.isListening.value) {
+      volumeBeforeVoice = volume.value
+      volume.value = Math.min(volume.value, 0.4)
+      applyVolume()
+      showToast('🎤 语音已开启')
+    }
+  }
+}
+
+voice.onCommand(handleVoiceCommand)
+watch(
+  () => voice.error.value,
+  (err) => {
+    if (err) showToast(err, 2500)
+  }
+)
+
 // ---------- 播放记录（localStorage 轻量持久化） ----------
 
 function progressKey(id) {
@@ -306,6 +502,9 @@ onMounted(() => {
       'loadedmetadata',
       () => {
         duration.value = videoEl.value.duration
+        // 应用记忆的音量（默认 1，若上次调过则恢复）
+        videoEl.value.volume = volume.value
+        videoEl.value.muted = volume.value === 0
         // 恢复上次播放记录：有分段则定位到上次动作段
         const p = loadProgress(videoId)
         if (p && hasSegments.value && p.index >= 0 && p.index < segments.value.length) {
@@ -324,6 +523,8 @@ onMounted(() => {
   }
   loadCheckinCount()
   scheduleAutoHide()
+  // 语音默认关闭：持续监听会一直占用麦克风采集，容易干扰视频播放（卡顿/无声），
+  // 需要时再点顶栏麦克风按钮手动开启。
 })
 
 onBeforeUnmount(() => {
@@ -335,6 +536,7 @@ onBeforeUnmount(() => {
   if (url.value) URL.revokeObjectURL(url.value)
   if (clickTimer) clearTimeout(clickTimer)
   if (hideTimer) clearTimeout(hideTimer)
+  voice.stop()
 })
 </script>
 
@@ -352,6 +554,7 @@ onBeforeUnmount(() => {
           @timeupdate="onTimeUpdate"
           @play="playing = true"
           @pause="playing = false"
+          @error="onVideoError"
           @click="onVideoClick"
         ></video>
 
@@ -375,6 +578,19 @@ onBeforeUnmount(() => {
                 d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"
               />
               <path v-else d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
+            </svg>
+          </button>
+          <button
+            class="icon-btn mic-btn"
+            :class="{ active: voiceListening, off: !voiceSupported }"
+            :disabled="!voiceSupported"
+            :aria-label="voiceListening ? '关闭语音' : '开启语音'"
+            :title="voiceListening ? '语音监听中，点击关闭' : '开启语音控制'"
+            @click="toggleVoice"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
             </svg>
           </button>
           <button class="icon-btn" aria-label="打卡" @click="finish">
@@ -421,7 +637,13 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="duration" class="seek-bar">
             <div class="seek-row">
-              <div class="seek-track" @click="onSeekClick">
+              <div
+                class="seek-track"
+                @pointerdown="onSeekPointerDown"
+                @pointermove="onSeekPointerMove"
+                @pointerup="onSeekPointerUp"
+                @pointercancel="onSeekPointerUp"
+              >
                 <div class="seek-played" :style="{ width: (currentTime / duration) * 100 + '%' }"></div>
                 <div
                   v-for="(s, i) in segments"
@@ -441,6 +663,36 @@ onBeforeUnmount(() => {
                   ></div>
                 </template>
                 <div class="seek-thumb" :style="{ left: (currentTime / duration) * 100 + '%' }"></div>
+              </div>
+              <div class="volume-wrap">
+                <button
+                  class="volume-btn"
+                  :aria-label="'音量 ' + Math.round(volume * 100) + '%'"
+                  @click="toggleVolumeMenu"
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+                    <path
+                      v-if="volume > 0"
+                      d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"
+                    />
+                    <path
+                      v-else
+                      d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"
+                    />
+                  </svg>
+                </button>
+                <div v-if="volumeMenuOpen" class="volume-menu">
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    v-model.number="volume"
+                    class="volume-slider"
+                    @input="onVolumeInput"
+                  />
+                  <span class="volume-num">{{ Math.round(volume * 100) }}%</span>
+                </div>
               </div>
               <div class="rate-wrap">
                 <button class="rate-btn" @click="toggleRateMenu">倍速 {{ rate }}x</button>
@@ -534,6 +786,41 @@ onBeforeUnmount(() => {
   font-size: 20px;
   padding: 6px 10px;
   color: var(--text);
+}
+
+/* 语音麦克风按钮：监听中高亮并呼吸闪烁，不支持时置灰 */
+.mic-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mic-btn svg {
+  display: block;
+}
+
+.mic-btn.active {
+  color: var(--primary);
+}
+
+.mic-btn.active svg {
+  animation: mic-pulse 1.6s ease-in-out infinite;
+}
+
+.mic-btn.off {
+  opacity: 0.4;
+}
+
+@keyframes mic-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.55;
+  }
 }
 
 .checkin-pill {
@@ -699,6 +986,8 @@ onBeforeUnmount(() => {
   background: var(--border);
   border-radius: 3px;
   cursor: pointer;
+  /* 触摸拖动时禁止页面滚动/缩放，保证拖动流畅 */
+  touch-action: none;
 }
 
 .seek-played {
@@ -826,6 +1115,52 @@ onBeforeUnmount(() => {
 .player.fullscreen .v-btn.big svg {
   width: 46px;
   height: 46px;
+}
+
+/* 音量按钮（进度条右侧，倍速按钮旁） */
+.volume-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.volume-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.28);
+  color: #000;
+}
+
+.volume-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 20;
+}
+
+.volume-slider {
+  width: 120px;
+  accent-color: var(--primary);
+}
+
+.volume-num {
+  font-size: 12px;
+  color: var(--text);
+  min-width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 倍速按钮（进度条右侧） */

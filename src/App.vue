@@ -96,13 +96,15 @@ const tabs = [
   left: 50%;
   bottom: 90px;
   transform: translateX(-50%);
-  background: rgba(6, 78, 59, 0.92);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1f2937;
   padding: 10px 20px;
   border-radius: 999px;
   font-size: 14px;
-  z-index: 100;
+  z-index: 300;
   white-space: nowrap;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
 }
 
 .toast-enter-active,
