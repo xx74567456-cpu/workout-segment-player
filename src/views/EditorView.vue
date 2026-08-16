@@ -3,6 +3,8 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { updateVideo, uid } from '../db'
 import { store, closeEditor, showToast } from '../store'
 import { formatTime } from '../utils'
+import AppIcon from '../components/AppIcon.vue'
+import { buildTemplate } from '../segmentTemplate'
 
 const video = computed(() => store.editorVideo)
 
@@ -267,7 +269,7 @@ async function save() {
   try {
     video.value.segments = normalized
     await updateVideo(video.value)
-    showToast('保存成功 ✅')
+    showToast('保存成功')
     // 短暂停留让用户看到提示，再关闭编辑器
     setTimeout(() => closeEditor(), 500)
   } catch (err) {
@@ -276,13 +278,38 @@ async function save() {
     alert('保存失败：' + (err.message || err))
   }
 }
+
+/** 导出当前编辑中的分段为模板文件（无需先保存） */
+function exportTemplate() {
+  const segs = segments.value.filter((s) => s.end - s.start > 0.5)
+  if (!segs.length) {
+    showToast('请先切分出分段')
+    return
+  }
+  const data = buildTemplate({
+    name: video.value?.name || '',
+    duration: duration.value,
+    segments: segs,
+  })
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `分段模板-${data.sourceName}.json`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+  showToast('已导出分段模板')
+}
 </script>
 
 <template>
   <div class="editor">
     <header class="topbar">
-      <button class="icon-btn" @click="closeEditor">✕</button>
+      <button class="icon-btn" @click="closeEditor"><AppIcon name="close" :size="20" /></button>
       <h1>编辑分段</h1>
+      <button class="icon-btn" title="导出分段模板" @click="exportTemplate"><AppIcon name="download" :size="20" /></button>
       <button class="save-btn" :disabled="saving" @click="save">
         {{ saving ? '保存中…' : '保存' }}
       </button>
@@ -397,10 +424,10 @@ async function save() {
       <!-- 操作区 -->
       <div class="toolbar">
         <button class="split-btn" @click="splitAtCurrent">
-          ✂️ 在此切分（{{ formatTime(currentTime) }}）
+          <AppIcon name="scissors" :size="14" /> 在此切分（{{ formatTime(currentTime) }}）
         </button>
         <button v-if="selectedSegment" class="del-seg-btn" @click="removeSelected">
-          🗑 删除选中段
+          <AppIcon name="trash" :size="14" /> 删除选中段
         </button>
       </div>
     </div>
@@ -408,7 +435,7 @@ async function save() {
     <!-- 段列表 -->
     <div class="seg-header">
       <span class="seg-title">动作分段（{{ segments.length }}）</span>
-      <button class="clear-btn" @click="clearSegments">🗑 清除分段</button>
+      <button class="clear-btn" @click="clearSegments"><AppIcon name="trash" :size="12" /> 清除分段</button>
     </div>
     <div class="seg-list">
       <div
@@ -433,9 +460,9 @@ async function save() {
           <div class="seg-time">{{ formatTime(s.start) }} - {{ formatTime(s.end) }}</div>
         </div>
         <button v-if="selectedIndex === i" class="rename-btn" @click.stop="startEdit(i)">
-          ✏️ 重命名
+          <AppIcon name="edit" :size="13" /> 重命名
         </button>
-        <button class="del-btn" @click.stop="removeSegment(i)">🗑</button>
+        <button class="del-btn" @click.stop="removeSegment(i)"><AppIcon name="trash" :size="16" /></button>
       </div>
       <p v-if="!hasSegments" class="empty">暂无动作段</p>
     </div>
@@ -469,8 +496,11 @@ async function save() {
 }
 
 .icon-btn {
-  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 4px 8px;
+  color: var(--text);
 }
 
 .save-btn {
@@ -535,7 +565,7 @@ async function save() {
 .ctrl-btn {
   padding: 7px 12px;
   border-radius: 999px;
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(52, 211, 153, 0.1);
   border: 1px solid var(--border);
   color: var(--text);
   font-size: 13px;
@@ -752,6 +782,10 @@ async function save() {
   border-radius: var(--radius);
   font-size: 14px;
   font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .del-seg-btn {
@@ -763,6 +797,10 @@ async function save() {
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 
 .seg-header {
@@ -785,6 +823,9 @@ async function save() {
   border: 1px solid var(--danger);
   border-radius: 6px;
   opacity: 0.85;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .seg-list {
@@ -861,10 +902,13 @@ async function save() {
   font-size: 12px;
   padding: 5px 10px;
   border-radius: 6px;
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(52, 211, 153, 0.1);
   border: 1px solid var(--primary);
   color: var(--primary-dark);
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .seg-time {
@@ -873,8 +917,11 @@ async function save() {
 }
 
 .del-btn {
-  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 6px;
+  color: var(--danger);
 }
 
 .empty {

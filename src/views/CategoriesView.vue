@@ -10,6 +10,7 @@ import {
   uid,
 } from '../db'
 import { store } from '../store'
+import AppIcon from '../components/AppIcon.vue'
 
 const folders = ref([])
 const videos = ref([])
@@ -80,11 +81,11 @@ function goFolder(f) {
 
     <div v-if="folders.length" class="list">
       <div v-for="f in folders" :key="f.id" class="item" @click="goFolder(f)">
-        <span class="folder-icon">📁</span>
+        <span class="folder-icon"><AppIcon name="folder" :size="20" /></span>
         <span class="folder-name">{{ f.name }}</span>
         <span class="count">{{ videoCount(f.id) }} 个视频</span>
-        <button class="action" @click.stop="rename(f)">✏️</button>
-        <button class="action danger" @click.stop="remove(f)">🗑</button>
+        <button class="action" @click.stop="rename(f)"><AppIcon name="edit" :size="16" /></button>
+        <button class="action danger" @click.stop="remove(f)"><AppIcon name="trash" :size="16" /></button>
       </div>
     </div>
     <div v-else class="empty">
@@ -145,7 +146,10 @@ function goFolder(f) {
 }
 
 .folder-icon {
-  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
 }
 
 .folder-name {
@@ -160,8 +164,11 @@ function goFolder(f) {
 }
 
 .action {
-  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 4px;
+  color: var(--text-dim);
 }
 
 .action.danger {

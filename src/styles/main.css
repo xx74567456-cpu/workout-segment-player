@@ -1,14 +1,27 @@
 :root {
   color-scheme: light;
-  --bg: #f5faf7;
+  --bg: #f2faf6;
   --bg-elevated: #ffffff;
-  --border: #e2ece6;
-  --text: #1e2f26;
+  --border: #dbece2;
+  --text: #22352c;
   --text-dim: #7c8e83;
-  --primary: #10b981;
-  --primary-dark: #059669;
-  --danger: #ef4444;
+  --primary: #34d399;
+  --primary-dark: #10b981;
+  --danger: #f87171;
   --radius: 12px;
+}
+
+/* 深色模式：薄荷绿暗色配色 */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0f1a15;
+  --bg-elevated: #18251f;
+  --border: #2a3a33;
+  --text: #e3efe8;
+  --text-dim: #8ba396;
+  --primary: #34d399;
+  --primary-dark: #6ee7b7;
+  --danger: #f87171;
 }
 
 * {

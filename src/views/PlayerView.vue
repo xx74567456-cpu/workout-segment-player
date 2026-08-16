@@ -1,11 +1,12 @@
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { addCheckin, getAllCheckins, deleteCheckinsByVideo } from '../db'
 import { store, closePlayer, showToast } from '../store'
 import { formatTime, todayStr } from '../utils'
 import { ScreenOrientation } from '@capacitor/screen-orientation'
 import { StatusBar } from '@capacitor/status-bar'
 import { useVoiceControl } from '../composables/useVoiceControl'
+import AppIcon from '../components/AppIcon.vue'
 
 const video = computed(() => store.playerVideo)
 const segments = computed(() => video.value?.segments || [])
@@ -53,6 +54,119 @@ const checkinCount = ref(0)
 // 设置菜单
 const settingsMenuOpen = ref(false)
 
+// ---------- 训练设置（休息/重复/循环/镜像/AB循环），持久化到 localStorage ----------
+const SETTINGS_KEY = 'fit-segment:train-settings'
+function readSettings() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY))
+    return raw && typeof raw === 'object' ? raw : {}
+  } catch {
+    return {}
+  }
+}
+const train = reactive({
+  mirror: false, // 画面镜像翻转
+  restEnabled: false, // 组间休息
+  restSeconds: 10, // 休息时长（秒）
+  repeatTimes: 1, // 每个动作重复次数
+  roundCount: 1, // 整组循环轮数
+  abEnabled: false, // AB 区间循环
+})
+{
+  const saved = readSettings()
+  train.mirror = !!saved.mirror
+  train.restEnabled = !!saved.restEnabled
+  train.restSeconds = saved.restSeconds ?? 10
+  train.repeatTimes = saved.repeatTimes ?? 1
+  train.roundCount = saved.roundCount ?? 1
+  train.abEnabled = !!saved.abEnabled
+}
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(train))
+  } catch {
+    /* localStorage 不可用时静默失败 */
+  }
+}
+
+// 训练设置弹窗
+const trainSettingsOpen = ref(false)
+
+// 运行时状态
+const resting = ref(false) // 是否在休息倒计时
+const restRemaining = ref(0) // 休息剩余秒数
+const currentRepeat = ref(1) // 当前动作已练遍数
+const currentRound = ref(1) // 当前第几轮
+const abStart = ref(null) // AB 循环 A 点（秒）
+const abEnd = ref(null) // AB 循环 B 点（秒）
+let restTimer = null
+let restCallback = null // 休息结束后的回调（跳到下一动作）
+
+const REST_OPTIONS = [5, 10, 15, 20, 30, 45, 60]
+const REPEAT_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10]
+const ROUND_OPTIONS = [1, 2, 3, 4, 5]
+
+function toggleTrainSettings() {
+  trainSettingsOpen.value = !trainSettingsOpen.value
+  settingsMenuOpen.value = false
+  scheduleAutoHide()
+}
+
+/** 设置 AB 循环的 A 点（当前播放位置） */
+function setAbA() {
+  abStart.value = videoEl.value ? videoEl.value.currentTime : null
+  scheduleAutoHide()
+}
+
+/** 设置 AB 循环的 B 点（当前播放位置） */
+function setAbB() {
+  abEnd.value = videoEl.value ? videoEl.value.currentTime : null
+  scheduleAutoHide()
+}
+
+/** 取消休息倒计时（用户手动切换/播放时） */
+function cancelRest() {
+  if (restTimer) clearInterval(restTimer)
+  restTimer = null
+  restCallback = null
+  resting.value = false
+  restRemaining.value = 0
+}
+
+/** 开始组间休息倒计时，结束后执行 cb（跳到下一动作） */
+function startRest(cb) {
+  const v = videoEl.value
+  if (v) v.pause()
+  resting.value = true
+  restRemaining.value = train.restSeconds
+  restCallback = cb
+  if (restTimer) clearInterval(restTimer)
+  restTimer = setInterval(() => {
+    restRemaining.value--
+    if (restRemaining.value <= 0) {
+      clearInterval(restTimer)
+      restTimer = null
+      const done = restCallback
+      restCallback = null
+      resting.value = false
+      restRemaining.value = 0
+      done()
+    }
+  }, 1000)
+}
+
+/** 跳过当前休息，立即进入下一动作 */
+function skipRest() {
+  if (!resting.value) return
+  if (restTimer) clearInterval(restTimer)
+  restTimer = null
+  const done = restCallback
+  restCallback = null
+  resting.value = false
+  restRemaining.value = 0
+  done()
+}
+
 async function loadCheckinCount() {
   try {
     const all = await getAllCheckins()
@@ -68,6 +182,21 @@ const currentSegment = computed(() =>
 
 const hasSegments = computed(() => segments.value.length > 0)
 
+// 训练进度文字（轮数 / 重复 / AB 循环），仅在启用对应功能时显示
+const trainInfo = computed(() => {
+  const parts = []
+  if (train.roundCount > 1) parts.push(`第 ${currentRound.value}/${train.roundCount} 轮`)
+  if (train.repeatTimes > 1) parts.push(`重复 ${currentRepeat.value}/${train.repeatTimes}`)
+  if (train.abEnabled && abStart.value != null && abEnd.value != null) parts.push('AB 循环')
+  return parts.join(' · ')
+})
+
+// 是否开启「自动推进」训练模式：重复 / 轮数 / 休息任一开启时，动作练完自动切下一个
+// （默认全关时保持原单段循环，需手动点「下一个」）
+const autoAdvance = computed(
+  () => train.repeatTimes > 1 || train.roundCount > 1 || train.restEnabled
+)
+
 function playCurrent() {
   const v = videoEl.value
   if (!v) return
@@ -81,6 +210,8 @@ function playCurrent() {
 function togglePlay() {
   const v = videoEl.value
   if (!v) return
+  // 休息中点击播放：取消休息，直接继续当前动作（不推进）
+  if (resting.value) cancelRest()
   if (v.paused) {
     v.play().catch((err) => {
       // 用户主动点播放仍失败，说明视频本身有问题（编码不支持 / 数据损坏）
@@ -254,21 +385,94 @@ async function toggleFullscreen() {
   scheduleAutoHide()
 }
 
-/** 核心循环逻辑：当前段到末尾时跳回段首，实现单段循环 */
+/** 核心循环逻辑：AB 循环 / 动作重复 / 组间休息 / 整组循环 */
 function onTimeUpdate() {
   const v = videoEl.value
-  // 拖动进度条期间暂停自动更新，避免预览位置被播放进度覆盖
-  if (dragging.value) return
+  // 拖动进度条或休息中不处理，避免覆盖倒计时 / 预览位置
+  if (dragging.value || resting.value) return
   currentTime.value = v.currentTime
+
+  // AB 区间循环优先：在 A/B 两点之间反复
+  if (train.abEnabled && abStart.value != null && abEnd.value != null && abEnd.value > abStart.value) {
+    if (v.currentTime >= abEnd.value) {
+      v.currentTime = abStart.value
+      playReplayBeep()
+      return
+    }
+  }
+
   const seg = currentSegment.value
   if (seg) {
     if (v.currentTime >= seg.end) {
-      v.currentTime = seg.start
-      playReplayBeep() // 单段循环：当前动作重播
+      if (autoAdvance.value) {
+        handleSegmentEnd()
+      } else {
+        v.currentTime = seg.start
+        playReplayBeep() // 单段循环：当前动作重播
+      }
     }
   } else if (v.duration && v.currentTime >= v.duration - 0.1) {
     v.currentTime = 0
     playReplayBeep() // 无分段：整段重播
+  }
+}
+
+/** 重播当前动作（重复次数未满时） */
+function replaySegment() {
+  const v = videoEl.value
+  if (!v) return
+  const seg = currentSegment.value
+  v.currentTime = seg ? seg.start : 0
+  playReplayBeep()
+}
+
+/** 当前动作练完：按「重复次数 → 休息 → 下一个动作 → 轮数」推进 */
+function handleSegmentEnd() {
+  // 动作重复次数未满：重播当前动作
+  if (train.repeatTimes > 1 && currentRepeat.value < train.repeatTimes) {
+    currentRepeat.value++
+    replaySegment()
+    return
+  }
+  currentRepeat.value = 1
+
+  const goNextSegment = () => {
+    currentIndex.value++
+    playCurrent()
+    playSwitchBeep(880)
+  }
+  const goFirstRound = () => {
+    currentIndex.value = 0
+    currentRound.value++
+    playCurrent()
+    playSwitchBeep(880)
+  }
+
+  if (currentIndex.value < segments.value.length - 1) {
+    // 还有下一个动作
+    if (train.restEnabled) startRest(goNextSegment)
+    else goNextSegment()
+  } else {
+    // 最后一个动作练完：判断是否还有下一轮
+    if (train.roundCount > 1 && currentRound.value < train.roundCount) {
+      if (train.restEnabled) startRest(goFirstRound)
+      else goFirstRound()
+    } else {
+      currentRound.value = 1
+      currentRepeat.value = 1
+      // 整组训练完成：暂停并回到第一个动作，避免停在末尾反复触发
+      const v = videoEl.value
+      if (v) {
+        v.pause()
+        currentIndex.value = 0
+        const first = segments.value[0]
+        if (first) {
+          v.currentTime = first.start
+          currentTime.value = first.start
+        }
+      }
+      finish()
+    }
   }
 }
 
@@ -324,6 +528,8 @@ function playReplayBeep() {
 }
 
 function next() {
+  cancelRest()
+  currentRepeat.value = 1
   if (!hasSegments.value) {
     // 无分段：整段循环，下一个就是重播
     playCurrent()
@@ -342,6 +548,8 @@ function next() {
 }
 
 function prev() {
+  cancelRest()
+  currentRepeat.value = 1
   if (!hasSegments.value) {
     // 无分段：整段循环，「后退」等价于重播当前，保证有响应
     playCurrent()
@@ -360,6 +568,8 @@ function prev() {
 }
 
 function jumpTo(i) {
+  cancelRest()
+  currentRepeat.value = 1
   const changed = i !== currentIndex.value
   currentIndex.value = i
   playCurrent()
@@ -386,7 +596,7 @@ async function finish() {
   if (confirm(`「${name}」本次训练完成，打卡一次？`)) {
     await addCheckin({ videoId: video.value.id, date: todayStr(), timestamp: Date.now() })
     checkinCount.value++
-    alert('已打卡！干得漂亮 💪')
+    alert('已打卡！干得漂亮')
   }
 }
 
@@ -426,7 +636,7 @@ function handleVoiceCommand(cmd) {
   } else if (cmd === 'pause') {
     if (!videoEl.value?.paused) togglePlay()
   }
-  showToast(`🎤 ${VOICE_LABEL[cmd]}`)
+  showToast(`语音 ${VOICE_LABEL[cmd]}`)
   scheduleAutoHide()
 }
 
@@ -443,7 +653,7 @@ async function toggleVoice() {
       applyVolume()
       volumeBeforeVoice = null
     }
-    showToast('🎤 语音已关闭')
+    showToast('语音已关闭')
   } else {
     await voice.start()
     // 仅当语音真正开启成功时才降低视频音量，避免启动失败时音量被误降
@@ -451,7 +661,7 @@ async function toggleVoice() {
       volumeBeforeVoice = volume.value
       volume.value = Math.min(volume.value, 0.4)
       applyVolume()
-      showToast('🎤 语音已开启')
+      showToast('语音已开启')
     }
   }
 }
@@ -549,6 +759,7 @@ onBeforeUnmount(() => {
           ref="videoEl"
           class="video"
           :src="url"
+          :style="{ transform: train.mirror ? 'scaleX(-1)' : '' }"
           playsinline
           webkit-playsinline
           @timeupdate="onTimeUpdate"
@@ -560,7 +771,7 @@ onBeforeUnmount(() => {
 
         <!-- 顶部栏：覆盖在视频上，半透明，随控制条一起呼出/消失 -->
         <header class="topbar" :class="{ hidden: !controlsVisible }">
-          <button class="icon-btn" @click="closePlayer">✕</button>
+          <button class="icon-btn" @click="closePlayer"><AppIcon name="close" :size="20" /></button>
           <div class="title">
             <div class="video-name">{{ video?.name }}</div>
             <div class="seg-name">
@@ -608,6 +819,7 @@ onBeforeUnmount(() => {
               </svg>
             </button>
             <div v-if="settingsMenuOpen" class="settings-menu">
+              <button class="settings-option" @click="toggleTrainSettings">训练设置</button>
               <button class="settings-option danger" @click="clearCheckins">清除打卡次数</button>
             </div>
           </div>
@@ -619,11 +831,18 @@ onBeforeUnmount(() => {
             {{
               hasSegments
                 ? currentIndex === segments.length - 1
-                  ? '最后一个动作，练完点 🏁 打卡'
+                  ? '最后一个动作，练完点打卡'
                   : '练完点 ⏭ 切下一个动作'
                 : '单击显示进度条，双击播放/暂停'
             }}
           </p>
+          <p v-if="trainInfo" class="train-progress">{{ trainInfo }}</p>
+          <div v-if="train.abEnabled" class="ab-bar">
+            <button class="ab-mark" @click="setAbA">设 A</button>
+            <button class="ab-mark" @click="setAbB">设 B</button>
+            <span class="ab-mark-info">A {{ abStart != null ? formatTime(abStart) : '—' }} · B {{ abEnd != null ? formatTime(abEnd) : '—' }}</span>
+            <button v-if="abStart != null && abEnd != null" class="ab-clear" @click="abStart = null; abEnd = null">清除</button>
+          </div>
           <div v-if="hasSegments" ref="segListEl" class="seg-list">
             <button
               v-for="(s, i) in displaySegments"
@@ -745,9 +964,107 @@ onBeforeUnmount(() => {
             </svg>
           </button>
         </div>
+
+        <!-- 组间休息倒计时覆盖层 -->
+        <div v-if="resting" class="rest-overlay">
+          <div class="rest-card">
+            <div class="rest-title">休息</div>
+            <div class="rest-num">{{ restRemaining }}</div>
+            <div class="rest-sub">秒后进入下一个动作</div>
+            <button class="rest-skip" @click="skipRest">跳过休息</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
+
+  <!-- 训练设置弹窗 -->
+  <teleport to="body">
+    <div v-if="trainSettingsOpen" class="train-overlay" @click.self="toggleTrainSettings">
+      <div class="train-sheet">
+        <div class="train-head">
+          <div class="train-title">训练设置</div>
+          <button class="train-close" aria-label="关闭" @click="toggleTrainSettings"><AppIcon name="close" :size="16" /></button>
+        </div>
+
+        <!-- 画面镜像 -->
+        <label class="train-row">
+          <span class="train-label">
+            <span class="train-name">画面镜像</span>
+            <span class="train-desc">左右翻转画面，跟练时方向一致</span>
+          </span>
+          <input type="checkbox" v-model="train.mirror" class="switch" @change="saveSettings" />
+        </label>
+
+        <!-- 组间休息 -->
+        <label class="train-row">
+          <span class="train-label">
+            <span class="train-name">组间休息</span>
+            <span class="train-desc">每个动作之间休息倒计时</span>
+          </span>
+          <input type="checkbox" v-model="train.restEnabled" class="switch" @change="saveSettings" />
+        </label>
+        <div v-if="train.restEnabled" class="train-options">
+          <button
+            v-for="s in REST_OPTIONS"
+            :key="s"
+            class="train-chip"
+            :class="{ active: train.restSeconds === s }"
+            @click="train.restSeconds = s; saveSettings()"
+          >
+            {{ s }}s
+          </button>
+        </div>
+
+        <!-- 动作重复次数 -->
+        <div class="train-row plain">
+          <span class="train-label">
+            <span class="train-name">动作重复次数</span>
+            <span class="train-desc">每个动作连续练几遍</span>
+          </span>
+        </div>
+        <div class="train-options">
+          <button
+            v-for="n in REPEAT_OPTIONS"
+            :key="n"
+            class="train-chip"
+            :class="{ active: train.repeatTimes === n }"
+            @click="train.repeatTimes = n; saveSettings()"
+          >
+            {{ n }} 遍
+          </button>
+        </div>
+
+        <!-- 整组循环轮数 -->
+        <div class="train-row plain">
+          <span class="train-label">
+            <span class="train-name">整组循环轮数</span>
+            <span class="train-desc">全部动作练完后再循环几轮</span>
+          </span>
+        </div>
+        <div class="train-options">
+          <button
+            v-for="n in ROUND_OPTIONS"
+            :key="n"
+            class="train-chip"
+            :class="{ active: train.roundCount === n }"
+            @click="train.roundCount = n; saveSettings()"
+          >
+            {{ n }} 轮
+          </button>
+        </div>
+
+        <!-- AB 区间循环 -->
+        <label class="train-row">
+          <span class="train-label">
+            <span class="train-name">AB 区间循环</span>
+            <span class="train-desc">开启后在播放界面点「设 A / 设 B」标记区间</span>
+          </span>
+          <input type="checkbox" v-model="train.abEnabled" class="switch" @change="saveSettings" />
+        </label>
+      </div>
+    </div>
+  </teleport>
 </template>
 
 <style scoped>
@@ -783,7 +1100,9 @@ onBeforeUnmount(() => {
 }
 
 .icon-btn {
-  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 6px 10px;
   color: var(--text);
 }
@@ -1131,7 +1450,7 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   border-radius: 999px;
-  background: rgba(16, 185, 129, 0.28);
+  background: rgba(52, 211, 153, 0.28);
   color: #000;
 }
 
@@ -1168,7 +1487,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(16, 185, 129, 0.28);
+  background: rgba(52, 211, 153, 0.28);
   color: #000;
   font-size: 12px;
   font-weight: 600;
@@ -1221,5 +1540,233 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 12px;
   backdrop-filter: blur(4px);
+}
+
+/* 训练进度文字（轮数 / 重复 / AB 循环） */
+.train-progress {
+  align-self: flex-start;
+  font-size: 12px;
+  font-weight: 600;
+  color: #06281c;
+  padding: 5px 10px;
+  background: rgba(52, 211, 153, 0.35);
+  border-radius: 999px;
+}
+
+/* AB 区间标记条（播放界面，开启 AB 循环后显示） */
+.ab-bar {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  backdrop-filter: blur(4px);
+  color: #000;
+}
+
+.ab-mark {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #06281c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ab-mark-info {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ab-clear {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #000;
+  font-size: 12px;
+}
+
+/* 组间休息倒计时覆盖层 */
+.rest-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.rest-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 32px 40px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--text);
+}
+
+.rest-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.rest-num {
+  font-size: 64px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--primary);
+}
+
+.rest-sub {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.rest-skip {
+  margin-top: 8px;
+  padding: 8px 20px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #06281c;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* 训练设置弹窗 */
+.train-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.train-sheet {
+  width: 100%;
+  max-width: 400px;
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.train-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.train-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.train-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.train-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.train-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.train-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.train-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.train-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.train-chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.train-chip.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #06281c;
+  font-weight: 700;
+}
+
+/* 开关（镜像 / 休息 / AB 循环） */
+.switch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--border);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+
+.switch:checked {
+  background: var(--primary);
+}
+
+.switch:checked::after {
+  transform: translateX(20px);
 }
 </style>

@@ -90,6 +90,8 @@ function plainVideo(v) {
     duration: v.duration,
     thumbnail: v.thumbnail,
     folderId: v.folderId,
+    note: v.note || '',
+    weeklyGoal: v.weeklyGoal || 0,
     segments: (v.segments || []).map((s) => ({
       id: s.id,
       name: s.name,
@@ -176,5 +178,18 @@ export function deleteCheckinsByVideo(videoId) {
         cursor.continue()
       }
     }
+  })
+}
+
+/** 清空全部数据（视频 / 文件夹 / 打卡），用于「存储管理」里的重置 */
+export async function clearAllData() {
+  await run(STORE_VIDEOS, 'readwrite', (store) => {
+    store.clear()
+  })
+  await run(STORE_FOLDERS, 'readwrite', (store) => {
+    store.clear()
+  })
+  await run(STORE_CHECKINS, 'readwrite', (store) => {
+    store.clear()
   })
 }

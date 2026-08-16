@@ -49,3 +49,33 @@ export function showToast(message, duration = 1500) {
     toast.show = false
   }, duration)
 }
+
+// ---------- 主题（深色 / 浅色） ----------
+
+export const theme = reactive({
+  dark: false,
+})
+
+const THEME_KEY = 'fit-segment:theme'
+
+/** 应用主题到根元素，并记忆到 localStorage */
+export function applyTheme(dark) {
+  theme.dark = dark
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light')
+  try {
+    localStorage.setItem(THEME_KEY, dark ? 'dark' : 'light')
+  } catch {}
+}
+
+/** 启动时恢复主题 */
+export function initTheme() {
+  let dark = false
+  try {
+    dark = localStorage.getItem(THEME_KEY) === 'dark'
+  } catch {}
+  applyTheme(dark)
+}
+
+export function toggleTheme() {
+  applyTheme(!theme.dark)
+}

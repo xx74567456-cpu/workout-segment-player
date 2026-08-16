@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { getAllCheckins, getAllVideos } from '../db'
+import AppIcon from '../components/AppIcon.vue'
 
 const checkins = ref([])
 const videos = ref([])
@@ -39,6 +40,101 @@ const streak = computed(() => {
   }
   return count
 })
+
+// ---------- 数据统计：时长 / 周目标 / 热力图 / 里程碑 ----------
+
+function formatDuration(sec) {
+  sec = Math.round(sec || 0)
+  if (sec < 60) return `${sec} 秒`
+  const m = Math.floor(sec / 60)
+  if (m < 60) return `${m} 分钟`
+  const h = Math.floor(m / 60)
+  const mm = m % 60
+  return `${h} 小时 ${mm} 分`
+}
+
+// 累计跟练时长：按打卡次数累加对应视频的总时长（近似估计）
+const totalDuration = computed(() => {
+  const durMap = {}
+  for (const v of videos.value) durMap[v.id] = v.duration || 0
+  return checkins.value.reduce((sum, c) => sum + (durMap[c.videoId] || 0), 0)
+})
+
+function startOfWeek(d) {
+  const x = new Date(d)
+  const day = (x.getDay() + 6) % 7 // 周一=0 … 周日=6
+  x.setDate(x.getDate() - day)
+  x.setHours(0, 0, 0, 0)
+  return x
+}
+
+// 每个视频的本周目标进度（仅展示设置了周目标的视频）
+const weeklyProgress = computed(() => {
+  const start = startOfWeek(new Date())
+  const end = new Date(start)
+  end.setDate(end.getDate() + 7)
+  const countMap = {}
+  for (const c of checkins.value) {
+    const t = new Date(c.date + 'T00:00:00')
+    if (t >= start && t < end) countMap[c.videoId] = (countMap[c.videoId] || 0) + 1
+  }
+  return videos.value
+    .filter((v) => (v.weeklyGoal || 0) > 0)
+    .map((v) => ({
+      id: v.id,
+      name: v.name,
+      goal: v.weeklyGoal,
+      count: countMap[v.id] || 0,
+      percent: Math.min(100, Math.round(((countMap[v.id] || 0) / v.weeklyGoal) * 100)),
+    }))
+    .sort((a, b) => b.percent - a.percent)
+})
+
+// 热力图：最近 16 周（周一为列起点），颜色深浅按当天打卡次数
+const HEAT_WEEKS = 16
+const heatmap = computed(() => {
+  const counts = {}
+  for (const c of checkins.value) counts[c.date] = (counts[c.date] || 0) + 1
+  const weeks = []
+  const thisWeek = startOfWeek(new Date())
+  const first = new Date(thisWeek)
+  first.setDate(first.getDate() - (HEAT_WEEKS - 1) * 7)
+  const cursor = new Date(first)
+  while (cursor <= thisWeek) {
+    const week = []
+    for (let d = 0; d < 7; d++) {
+      const day = new Date(cursor)
+      day.setDate(cursor.getDate() + d)
+      const date = dateStr(day)
+      week.push({
+        date,
+        count: counts[date] || 0,
+        future: day.getTime() > Date.now(),
+      })
+    }
+    weeks.push(week)
+    cursor.setDate(cursor.getDate() + 7)
+  }
+  return weeks
+})
+
+function heatLevel(count) {
+  if (count <= 0) return 0
+  if (count === 1) return 1
+  if (count === 2) return 2
+  if (count === 3) return 3
+  return 4
+}
+
+// 里程碑：按累计次数 / 连续天数解锁
+const milestones = computed(() => [
+  { key: 'first', label: '初次打卡', icon: 'flag', desc: '完成 1 次打卡', reached: checkins.value.length >= 1 },
+  { key: 'ten', label: '小有成就', icon: 'flag', desc: '累计 10 次打卡', reached: checkins.value.length >= 10 },
+  { key: 'fifty', label: '坚持达人', icon: 'flag', desc: '累计 50 次打卡', reached: checkins.value.length >= 50 },
+  { key: 'hundred', label: '百炼成钢', icon: 'flag', desc: '累计 100 次打卡', reached: checkins.value.length >= 100 },
+  { key: 'streak7', label: '连续 7 天', icon: 'calendar', desc: '连续打卡 7 天', reached: streak.value >= 7 },
+  { key: 'streak30', label: '连续 30 天', icon: 'calendar', desc: '连续打卡 30 天', reached: streak.value >= 30 },
+])
 
 // ---------- 日历 ----------
 const monthCursor = ref(new Date())
@@ -134,6 +230,32 @@ function nextMonth() {
       </div>
     </div>
 
+    <!-- 累计跟练时长 -->
+    <div class="duration-strip">
+      <span class="ds-label">累计跟练时长</span>
+      <span class="ds-value">{{ formatDuration(totalDuration) }}</span>
+    </div>
+
+    <!-- 本周目标（每个视频独立设置） -->
+    <section class="section goal-card">
+      <div class="goal-head">
+        <h2>本周目标</h2>
+        <span class="goal-hint">长按视频可设置周目标</span>
+      </div>
+      <div v-if="weeklyProgress.length" class="goal-list">
+        <div v-for="g in weeklyProgress" :key="g.id" class="goal-item">
+          <div class="goal-item-head">
+            <span class="goal-name">{{ g.name }}</span>
+            <span class="goal-num">{{ g.count }} / {{ g.goal }} 次</span>
+          </div>
+          <div class="goal-track">
+            <div class="goal-fill" :style="{ width: g.percent + '%' }"></div>
+          </div>
+        </div>
+      </div>
+      <div v-else class="goal-empty">还没有设置周目标，长按视频即可设置</div>
+    </section>
+
     <!-- 日历 -->
     <section class="section">
       <div class="cal-header">
@@ -167,13 +289,52 @@ function nextMonth() {
       </div>
     </section>
 
+    <!-- 活跃热力图 -->
+    <section class="section">
+      <h2>活跃热力图</h2>
+      <div class="heatmap">
+        <div v-for="(week, wi) in heatmap" :key="wi" class="heat-col">
+          <div
+            v-for="(day, di) in week"
+            :key="di"
+            class="heat-cell"
+            :class="['lv' + heatLevel(day.count), { future: day.future }]"
+            :title="day.future ? '' : day.date + '：' + day.count + ' 次'"
+          ></div>
+        </div>
+      </div>
+      <div class="heat-legend">
+        <span class="hl-label">少</span>
+        <span class="heat-cell lv0"></span>
+        <span class="heat-cell lv1"></span>
+        <span class="heat-cell lv2"></span>
+        <span class="heat-cell lv3"></span>
+        <span class="heat-cell lv4"></span>
+        <span class="hl-label">多</span>
+      </div>
+    </section>
+
+    <!-- 里程碑 -->
+    <section class="section">
+      <h2>里程碑</h2>
+      <div class="milestones">
+        <div v-for="m in milestones" :key="m.key" class="mile" :class="{ reached: m.reached }">
+          <span class="mile-icon"><AppIcon :name="m.icon" :size="18" /></span>
+          <span class="mile-body">
+            <span class="mile-label">{{ m.label }}</span>
+            <span class="mile-desc">{{ m.desc }}</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
     <div v-if="!checkins.length" class="empty">
-      <p class="empty-icon">📅</p>
+      <p class="empty-icon"><AppIcon name="calendar" :size="44" /></p>
       <p>还没有打卡记录</p>
-      <p class="dim">完成一次训练后，在播放器里点 💪 打卡</p>
+      <p class="dim">完成一次训练后，在播放器里点打卡即可记录</p>
     </div>
 
-    <!-- 选中日期打卡详情弹窗（居中，右上角 ✕ 关闭） -->
+    <!-- 选中日期打卡详情弹窗（居中，右上角关闭按钮） -->
     <teleport to="body">
       <div v-if="selectedDate" class="day-overlay" @click.self="closeDetail">
         <div class="day-sheet">
@@ -182,7 +343,7 @@ function nextMonth() {
               <div class="day-sheet-title">{{ selectedDate }}</div>
               <div class="day-sheet-sub">共打卡 {{ selectedTotal }} 次</div>
             </div>
-            <button class="day-close" aria-label="关闭" @click="closeDetail">✕</button>
+            <button class="day-close" aria-label="关闭" @click="closeDetail"><AppIcon name="close" :size="16" /></button>
           </div>
           <div class="day-sheet-body">
             <div class="row" v-for="c in selectedItems" :key="c.id">
@@ -280,7 +441,7 @@ function nextMonth() {
   text-align: center;
   font-size: 12px;
   color: var(--text-dim);
-  padding: 2px 0 0;
+  line-height: 1;
 }
 
 .cal-grid {
@@ -306,7 +467,7 @@ function nextMonth() {
 }
 
 .cell.checkin {
-  background: rgba(16, 185, 129, 0.15);
+  background: rgba(52, 211, 153, 0.15);
   cursor: pointer;
 }
 
@@ -363,8 +524,10 @@ function nextMonth() {
 }
 
 .empty-icon {
-  font-size: 44px;
+  display: flex;
+  justify-content: center;
   margin-bottom: 10px;
+  color: var(--text-dim);
 }
 
 .empty .dim {
@@ -436,5 +599,217 @@ function nextMonth() {
 
 .day-sheet-body .row {
   margin-bottom: 0;
+}
+
+/* 累计跟练时长 */
+.duration-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.ds-label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.ds-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--primary-dark);
+}
+
+/* 本周目标 */
+.goal-card {
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.goal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.goal-head h2 {
+  margin-bottom: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.goal-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.goal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.goal-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.goal-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 12px;
+}
+
+.goal-num {
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.goal-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.goal-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+  transition: width 0.4s ease;
+}
+
+.goal-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+
+/* 热力图 */
+.heatmap {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.heat-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.heat-cell {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.heat-cell.lv1 {
+  background: #a7f3d0;
+}
+
+.heat-cell.lv2 {
+  background: #6ee7b7;
+}
+
+.heat-cell.lv3 {
+  background: #34d399;
+}
+
+.heat-cell.lv4 {
+  background: #10b981;
+}
+
+.heat-cell.future {
+  background: transparent;
+}
+
+.heat-legend {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.heat-legend .heat-cell {
+  width: 12px;
+  height: 12px;
+}
+
+.hl-label {
+  margin: 0 4px;
+}
+
+/* 里程碑 */
+.milestones {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.mile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  padding: 12px;
+  opacity: 0.5;
+}
+
+.mile.reached {
+  opacity: 1;
+}
+
+.mile-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.mile.reached .mile-icon {
+  background: rgba(52, 211, 153, 0.16);
+  color: var(--primary-dark);
+}
+
+.mile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mile-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.mile-desc {
+  font-size: 11px;
+  color: var(--text-dim);
 }
 </style>

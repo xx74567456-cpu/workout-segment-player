@@ -1,16 +1,20 @@
 <script setup>
 import { store, toast } from './store'
+import AppIcon from './components/AppIcon.vue'
 import LibraryView from './views/LibraryView.vue'
 import CategoriesView from './views/CategoriesView.vue'
 import CheckinView from './views/CheckinView.vue'
+import SettingsView from './views/SettingsView.vue'
 import PlayerView from './views/PlayerView.vue'
 import EditorView from './views/EditorView.vue'
 
 const tabs = [
-  { key: 'library', label: '视频', icon: '🎬' },
-  { key: 'categories', label: '分类', icon: '📁' },
-  { key: 'checkin', label: '打卡', icon: '📅' },
+  { key: 'library', label: '视频', icon: 'video' },
+  { key: 'categories', label: '分类', icon: 'folder' },
+  { key: 'checkin', label: '打卡', icon: 'calendar' },
+  { key: 'settings', label: '设置', icon: 'gear' },
 ]
+
 </script>
 
 <template>
@@ -19,6 +23,7 @@ const tabs = [
       <LibraryView v-if="store.tab === 'library'" />
       <CategoriesView v-else-if="store.tab === 'categories'" />
       <CheckinView v-else-if="store.tab === 'checkin'" />
+      <SettingsView v-else-if="store.tab === 'settings'" />
     </main>
 
     <!-- 底部导航 -->
@@ -30,7 +35,7 @@ const tabs = [
         :class="{ active: store.tab === t.key }"
         @click="store.tab = t.key"
       >
-        <span class="icon">{{ t.icon }}</span>
+        <span class="icon"><AppIcon :name="t.icon" :size="20" /></span>
         <span class="label">{{ t.label }}</span>
       </button>
     </nav>
@@ -83,24 +88,20 @@ const tabs = [
 }
 
 .icon {
-  font-size: 20px;
-  line-height: 1;
-  /* 图标容器：选中时显示胶囊背景；未选中灰度变灰，与彩色选中态形成对比 */
+  /* 图标容器：选中时显示胶囊背景；未选中用灰色、选中用主色（图标 fill=currentColor 跟随文字颜色） */
   width: 44px;
   height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  filter: grayscale(100%);
   opacity: 0.55;
-  transition: filter 0.15s, opacity 0.15s, background 0.15s, transform 0.15s;
+  transition: opacity 0.15s, background 0.15s, transform 0.15s;
 }
 
 .tab.active .icon {
-  filter: none;
   opacity: 1;
-  background: rgba(16, 185, 129, 0.14);
+  background: rgba(52, 211, 153, 0.14);
   transform: scale(1.08);
 }
 
