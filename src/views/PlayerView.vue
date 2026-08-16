@@ -42,6 +42,7 @@ const volumeMenuOpen = ref(false)
 const duration = ref(0)
 const playerEl = ref(null)
 const isFullscreen = ref(false)
+let orientationHandle = null // Capacitor 屏幕方向监听句柄（用于清理）
 const controlsVisible = ref(true)
 const segListEl = ref(null)
 
@@ -68,7 +69,7 @@ const train = reactive({
   mirror: false, // 画面镜像翻转
   restEnabled: false, // 组间休息
   restSeconds: 10, // 休息时长（秒）
-  repeatTimes: 1, // 每个动作重复次数
+  repeatTimes: 0, // 每个动作重复次数（0 表示无限循环）
   roundCount: 1, // 整组循环轮数
   abEnabled: false, // AB 区间循环
 })
@@ -77,7 +78,7 @@ const train = reactive({
   train.mirror = !!saved.mirror
   train.restEnabled = !!saved.restEnabled
   train.restSeconds = saved.restSeconds ?? 10
-  train.repeatTimes = saved.repeatTimes ?? 1
+  train.repeatTimes = saved.repeatTimes ?? 0
   train.roundCount = saved.roundCount ?? 1
   train.abEnabled = !!saved.abEnabled
 }
@@ -103,7 +104,18 @@ let restTimer = null
 let restCallback = null // 休息结束后的回调（跳到下一动作）
 
 const REST_OPTIONS = [5, 10, 15, 20, 30, 45, 60]
-const REPEAT_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10]
+// 动作重复次数选项：value 0 表示无限循环
+const REPEAT_OPTIONS = [
+  { value: 0, label: '∞ 无限' },
+  { value: 1, label: '1 遍' },
+  { value: 2, label: '2 遍' },
+  { value: 3, label: '3 遍' },
+  { value: 4, label: '4 遍' },
+  { value: 5, label: '5 遍' },
+  { value: 6, label: '6 遍' },
+  { value: 8, label: '8 遍' },
+  { value: 10, label: '10 遍' },
+]
 const ROUND_OPTIONS = [1, 2, 3, 4, 5]
 
 function toggleTrainSettings() {
@@ -186,7 +198,8 @@ const hasSegments = computed(() => segments.value.length > 0)
 const trainInfo = computed(() => {
   const parts = []
   if (train.roundCount > 1) parts.push(`第 ${currentRound.value}/${train.roundCount} 轮`)
-  if (train.repeatTimes > 1) parts.push(`重复 ${currentRepeat.value}/${train.repeatTimes}`)
+  if (train.repeatTimes === 0) parts.push('无限循环')
+  else if (train.repeatTimes > 1) parts.push(`重复 ${currentRepeat.value}/${train.repeatTimes}`)
   if (train.abEnabled && abStart.value != null && abEnd.value != null) parts.push('AB 循环')
   return parts.join(' · ')
 })
@@ -194,7 +207,7 @@ const trainInfo = computed(() => {
 // 是否开启「自动推进」训练模式：重复 / 轮数 / 休息任一开启时，动作练完自动切下一个
 // （默认全关时保持原单段循环，需手动点「下一个」）
 const autoAdvance = computed(
-  () => train.repeatTimes > 1 || train.roundCount > 1 || train.restEnabled
+  () => train.repeatTimes === 0 || train.repeatTimes > 1 || train.roundCount > 1 || train.restEnabled
 )
 
 function playCurrent() {
@@ -362,27 +375,49 @@ function videoIsLandscape() {
   return true
 }
 
-/** 切换全屏：横屏视频锁横屏、竖屏视频锁竖屏，并隐藏状态栏实现沉浸全屏 */
+/** 判断当前设备是否为横屏 */
+function isLandscapeNow() {
+  const o = window.screen && window.screen.orientation
+  if (o && o.type) return o.type.startsWith('landscape')
+  return window.innerWidth > window.innerHeight
+}
+
+/** 进入沉浸式全屏：隐藏状态栏、视频铺满、控制条自动隐藏 */
+function enterFullscreen() {
+  if (isFullscreen.value) return
+  isFullscreen.value = true
+  StatusBar.hide().catch(() => {})
+  scheduleAutoHide()
+}
+
+/** 退出全屏：恢复状态栏与 UI */
+function exitFullscreen() {
+  if (!isFullscreen.value) return
+  isFullscreen.value = false
+  StatusBar.show().catch(() => {})
+  scheduleAutoHide()
+}
+
+/** 重力旋转：横屏自动全屏、竖屏自动退出（跟随系统方向，不强制锁屏） */
+function onOrientationChange() {
+  if (isLandscapeNow()) enterFullscreen()
+  else exitFullscreen()
+}
+
+/** 手动全屏按钮：竖屏下点击强制锁横屏（竖屏视频锁竖屏）铺满，再点退出 */
 async function toggleFullscreen() {
   if (!isFullscreen.value) {
     const landscape = videoIsLandscape()
     try {
       await ScreenOrientation.lock({ orientation: landscape ? 'landscape' : 'portrait' })
     } catch {}
-    try {
-      await StatusBar.hide()
-    } catch {}
-    isFullscreen.value = true
+    enterFullscreen()
   } else {
     try {
       await ScreenOrientation.unlock()
     } catch {}
-    try {
-      await StatusBar.show()
-    } catch {}
-    isFullscreen.value = false
+    exitFullscreen()
   }
-  scheduleAutoHide()
 }
 
 /** 核心循环逻辑：AB 循环 / 动作重复 / 组间休息 / 整组循环 */
@@ -428,6 +463,11 @@ function replaySegment() {
 
 /** 当前动作练完：按「重复次数 → 休息 → 下一个动作 → 轮数」推进 */
 function handleSegmentEnd() {
+  // 无限循环：当前动作永远重播，不自动切下一个
+  if (train.repeatTimes === 0) {
+    replaySegment()
+    return
+  }
   // 动作重复次数未满：重播当前动作
   if (train.repeatTimes > 1 && currentRepeat.value < train.repeatTimes) {
     currentRepeat.value++
@@ -733,6 +773,21 @@ onMounted(() => {
   }
   loadCheckinCount()
   scheduleAutoHide()
+  // 监听屏幕方向变化：横屏自动全屏、竖屏自动退出（重力旋转）
+  ScreenOrientation.addListener('screenOrientationChange', ({ type }) => {
+    if (typeof type === 'string' && type.startsWith('landscape')) enterFullscreen()
+    else exitFullscreen()
+  })
+    .then((handle) => {
+      orientationHandle = handle
+    })
+    .catch(() => {})
+  window.addEventListener('resize', onOrientationChange)
+  if (window.screen && window.screen.orientation && window.screen.orientation.addEventListener) {
+    window.screen.orientation.addEventListener('change', onOrientationChange)
+  }
+  // 打开时若已是横屏（如平板横着拿），立即进入全屏
+  onOrientationChange()
   // 语音默认关闭：持续监听会一直占用麦克风采集，容易干扰视频播放（卡顿/无声），
   // 需要时再点顶栏麦克风按钮手动开启。
 })
@@ -746,6 +801,11 @@ onBeforeUnmount(() => {
   if (url.value) URL.revokeObjectURL(url.value)
   if (clickTimer) clearTimeout(clickTimer)
   if (hideTimer) clearTimeout(hideTimer)
+  if (orientationHandle) orientationHandle.remove()
+  window.removeEventListener('resize', onOrientationChange)
+  if (window.screen && window.screen.orientation && window.screen.orientation.removeEventListener) {
+    window.screen.orientation.removeEventListener('change', onOrientationChange)
+  }
   voice.stop()
 })
 </script>
@@ -1025,13 +1085,13 @@ onBeforeUnmount(() => {
         </div>
         <div class="train-options">
           <button
-            v-for="n in REPEAT_OPTIONS"
-            :key="n"
+            v-for="o in REPEAT_OPTIONS"
+            :key="o.value"
             class="train-chip"
-            :class="{ active: train.repeatTimes === n }"
-            @click="train.repeatTimes = n; saveSettings()"
+            :class="{ active: train.repeatTimes === o.value }"
+            @click="train.repeatTimes = o.value; saveSettings()"
           >
-            {{ n }} 遍
+            {{ o.label }}
           </button>
         </div>
 
@@ -1240,6 +1300,12 @@ onBeforeUnmount(() => {
   object-fit: contain;
   background: #000;
   transition: transform 0.3s ease;
+}
+
+/* 全屏时视频铺满整个屏幕（横屏视频在横屏下占满、消除竖屏黑边感） */
+.player.fullscreen .video {
+  height: 100%;
+  max-height: none;
 }
 
 .seg-list {
