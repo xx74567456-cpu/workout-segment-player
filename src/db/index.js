@@ -114,10 +114,12 @@ export function updateVideo(video) {
   })
 }
 
-export function deleteVideo(id) {
-  return run(STORE_VIDEOS, 'readwrite', (store) => {
+export async function deleteVideo(id) {
+  await run(STORE_VIDEOS, 'readwrite', (store) => {
     store.delete(id)
   })
+  // 级联删除该视频的打卡记录，避免留下「已删除视频」的孤儿打卡
+  await deleteCheckinsByVideo(id)
 }
 
 // ---------- 文件夹 ----------

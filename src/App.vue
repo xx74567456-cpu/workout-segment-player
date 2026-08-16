@@ -85,10 +85,31 @@ const tabs = [
 .icon {
   font-size: 20px;
   line-height: 1;
+  /* 图标容器：选中时显示胶囊背景；未选中灰度变灰，与彩色选中态形成对比 */
+  width: 44px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  filter: grayscale(100%);
+  opacity: 0.55;
+  transition: filter 0.15s, opacity 0.15s, background 0.15s, transform 0.15s;
+}
+
+.tab.active .icon {
+  filter: none;
+  opacity: 1;
+  background: rgba(16, 185, 129, 0.14);
+  transform: scale(1.08);
 }
 
 .label {
   font-size: 11px;
+}
+
+.tab.active .label {
+  font-weight: 600;
 }
 
 .toast {
