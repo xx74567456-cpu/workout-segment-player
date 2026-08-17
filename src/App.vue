@@ -1,6 +1,7 @@
 <script setup>
 import { store, toast } from './store'
 import AppIcon from './components/AppIcon.vue'
+import Dialog from './components/Dialog.vue'
 import LibraryView from './views/LibraryView.vue'
 import CategoriesView from './views/CategoriesView.vue'
 import CheckinView from './views/CheckinView.vue'
@@ -48,6 +49,9 @@ const tabs = [
     <transition name="toast">
       <div v-if="toast.show" class="toast">{{ toast.message }}</div>
     </transition>
+
+    <!-- 全局对话框（confirm / alert / prompt） -->
+    <Dialog />
   </div>
 </template>
 

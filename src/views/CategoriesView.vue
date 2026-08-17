@@ -9,7 +9,7 @@ import {
   updateVideo,
   uid,
 } from '../db'
-import { store } from '../store'
+import { store, showConfirm, showPrompt } from '../store'
 import AppIcon from '../components/AppIcon.vue'
 
 const folders = ref([])
@@ -36,7 +36,7 @@ async function create() {
 }
 
 async function rename(f) {
-  const name = prompt('重命名文件夹', f.name)
+  const name = await showPrompt({ title: '重命名文件夹', inputValue: f.name })
   if (!name || !name.trim()) return
   f.name = name.trim()
   await updateFolder(f)
@@ -45,7 +45,12 @@ async function rename(f) {
 
 async function remove(f) {
   const count = videoCount(f.id)
-  if (!confirm(`删除文件夹「${f.name}」？${count ? `里面有 ${count} 个视频会变成未分类。` : ''}`)) return
+  const ok = await showConfirm({
+    title: '删除文件夹',
+    message: `删除文件夹「${f.name}」？${count ? `里面有 ${count} 个视频会变成未分类。` : ''}`,
+    danger: true,
+  })
+  if (!ok) return
   for (const v of videos.value) {
     if (v.folderId === f.id) {
       v.folderId = null

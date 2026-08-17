@@ -1,7 +1,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { addCheckin, getAllCheckins, deleteCheckinsByVideo } from '../db'
-import { store, closePlayer, showToast } from '../store'
+import { store, closePlayer, showToast, showConfirm, showAlert } from '../store'
 import { formatTime, todayStr } from '../utils'
 import { ScreenOrientation } from '@capacitor/screen-orientation'
 import { StatusBar } from '@capacitor/status-bar'
@@ -671,10 +671,14 @@ function centerActiveChip() {
 
 async function finish() {
   const name = video.value?.name || '视频'
-  if (confirm(`「${name}」本次训练完成，打卡一次？`)) {
+  const ok = await showConfirm({
+    title: '打卡',
+    message: `「${name}」本次训练完成，打卡一次？`,
+  })
+  if (ok) {
     await addCheckin({ videoId: video.value.id, date: todayStr(), timestamp: Date.now() })
     checkinCount.value++
-    alert('已打卡！干得漂亮')
+    showToast('已打卡！干得漂亮')
   }
 }
 
@@ -687,12 +691,17 @@ function toggleSettingsMenu() {
 
 async function clearCheckins() {
   settingsMenuOpen.value = false
-  if (!confirm('确定清除当前视频的全部打卡次数吗？此操作不可恢复。')) return
+  const ok = await showConfirm({
+    title: '清除打卡次数',
+    message: '确定清除当前视频的全部打卡次数吗？此操作不可恢复。',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await deleteCheckinsByVideo(videoId)
     checkinCount.value = 0
   } catch (err) {
-    alert('清除失败：' + err.message)
+    showAlert({ title: '清除失败', message: err.message })
   }
 }
 

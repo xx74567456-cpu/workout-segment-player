@@ -11,7 +11,7 @@ import {
   addCheckin,
   uid,
 } from '../db'
-import { store, openPlayer, openEditor, showToast } from '../store'
+import { store, openPlayer, openEditor, showToast, showConfirm, showAlert, showPrompt } from '../store'
 import { formatTime, todayStr } from '../utils'
 import AppIcon from '../components/AppIcon.vue'
 import { buildTemplate, parseTemplate, applyTemplate } from '../segmentTemplate'
@@ -85,7 +85,12 @@ function toggleSelectAll() {
 async function deleteSelected() {
   const ids = [...selected.value]
   if (!ids.length) return
-  if (!confirm(`删除选中的 ${ids.length} 个视频？此操作不可恢复。`)) return
+  const ok = await showConfirm({
+    title: '删除视频',
+    message: `删除选中的 ${ids.length} 个视频？此操作不可恢复。`,
+    danger: true,
+  })
+  if (!ok) return
   for (const id of ids) await deleteVideo(id)
   selected.value = new Set()
   batchMode.value = false
@@ -223,7 +228,7 @@ async function exportBackup() {
     URL.revokeObjectURL(url)
     showToast('已导出备份文件')
   } catch (err) {
-    alert('导出失败：' + err.message)
+    showAlert({ title: '导出失败', message: err.message })
   }
 }
 
@@ -242,7 +247,11 @@ async function onBackupChange(e) {
     if (!data || data.app !== 'fit-segment' || !Array.isArray(data.videos)) {
       throw new Error('不是有效的备份文件')
     }
-    if (!confirm('导入备份会与现有数据合并（同名 id 覆盖），确定继续？')) return
+    const ok = await showConfirm({
+      title: '导入备份',
+      message: '导入备份会与现有数据合并（同名 id 覆盖），确定继续？',
+    })
+    if (!ok) return
     for (const f of data.folders || []) await addFolder(f)
     for (const v of data.videos || []) {
       await addVideo({
@@ -262,7 +271,7 @@ async function onBackupChange(e) {
     await load()
     showToast('导入完成')
   } catch (err) {
-    alert('导入失败：' + err.message)
+    showAlert({ title: '导入失败', message: err.message })
   }
 }
 
@@ -333,7 +342,7 @@ async function onFileChange(e) {
     await addVideo(video)
     await load()
   } catch (err) {
-    alert('视频导入失败：' + err.message)
+    showAlert({ title: '视频导入失败', message: err.message })
   } finally {
     importing.value = false
   }
@@ -457,7 +466,11 @@ async function menuNote() {
   const v = menuVideo.value
   closeMenu()
   if (!v) return
-  const note = prompt('给这个视频添加备注（目标、要点等）', v.note || '')
+  const note = await showPrompt({
+    title: '添加备注',
+    message: '给这个视频添加备注（目标、要点等）',
+    inputValue: v.note || '',
+  })
   if (note === null) return
   v.note = note.trim()
   await updateVideo(v)
@@ -469,7 +482,11 @@ async function menuWeeklyGoal() {
   const v = menuVideo.value
   closeMenu()
   if (!v) return
-  const raw = prompt('设置该视频每周练几次（0 表示不设目标）', String(v.weeklyGoal || 0))
+  const raw = await showPrompt({
+    title: '每周目标',
+    message: '设置该视频每周练几次（0 表示不设目标）',
+    inputValue: String(v.weeklyGoal || 0),
+  })
   if (raw === null) return
   const n = parseInt(raw, 10)
   if (!Number.isFinite(n) || n < 0) return
@@ -519,9 +536,10 @@ async function onTemplateChange(e) {
   try {
     const template = parseTemplate(await file.text())
     if (Math.abs((template.duration || 0) - (v.duration || 0)) > 2) {
-      const ok = confirm(
-        `模板原视频时长 ${formatTime(template.duration)} 与当前视频时长 ${formatTime(v.duration)} 相差较大，可能不是同一段视频，确定应用吗？`
-      )
+      const ok = await showConfirm({
+        title: '应用分段模板',
+        message: `模板原视频时长 ${formatTime(template.duration)} 与当前视频时长 ${formatTime(v.duration)} 相差较大，可能不是同一段视频，确定应用吗？`,
+      })
       if (!ok) return
     }
     const segs = applyTemplate(v, template)
@@ -529,7 +547,7 @@ async function onTemplateChange(e) {
     await load()
     showToast(`已应用分段模板（${segs.length} 段）`)
   } catch (err) {
-    alert('导入失败：' + (err.message || err))
+    showAlert({ title: '导入失败', message: err.message || err })
   }
 }
 

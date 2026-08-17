@@ -50,6 +50,60 @@ export function showToast(message, duration = 1500) {
   }, duration)
 }
 
+// ---------- 全局对话框（替代原生 confirm / alert / prompt） ----------
+
+export const dialog = reactive({
+  show: false,
+  type: 'confirm', // 'confirm' | 'alert' | 'prompt'
+  title: '',
+  message: '',
+  confirmText: '确定',
+  cancelText: '取消',
+  danger: false,
+  placeholder: '',
+  inputValue: '',
+  _resolve: null,
+})
+
+function openDialog(opts) {
+  return new Promise((resolve) => {
+    dialog.type = opts.type || 'confirm'
+    dialog.title = opts.title || ''
+    dialog.message = opts.message || ''
+    dialog.confirmText = opts.confirmText || (dialog.type === 'alert' ? '知道了' : '确定')
+    dialog.cancelText = opts.cancelText || '取消'
+    dialog.danger = !!opts.danger
+    dialog.placeholder = opts.placeholder || ''
+    dialog.inputValue = opts.inputValue || ''
+    dialog._resolve = resolve
+    dialog.show = true
+  })
+}
+
+/** 确认框：确定 resolve(true)，取消 resolve(false) */
+export function showConfirm(opts = {}) {
+  return openDialog({ ...opts, type: 'confirm' })
+}
+
+/** 提示框：仅一个按钮，点击 resolve(true) */
+export function showAlert(opts = {}) {
+  return openDialog({ ...opts, type: 'alert' })
+}
+
+/** 输入框：确定 resolve(输入值)，取消 resolve(null) */
+export function showPrompt(opts = {}) {
+  return openDialog({ ...opts, type: 'prompt' })
+}
+
+/** 关闭对话框并回传结果（由 Dialog 组件调用） */
+export function closeDialog(result) {
+  dialog.show = false
+  if (dialog._resolve) {
+    dialog._resolve(result)
+    dialog._resolve = null
+  }
+}
+
 // ---------- 主题（深色 / 浅色） ----------
 
 export const theme = reactive({

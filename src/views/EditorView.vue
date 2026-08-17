@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { updateVideo, uid } from '../db'
-import { store, closeEditor, showToast } from '../store'
+import { store, closeEditor, showToast, showAlert, showConfirm } from '../store'
 import { formatTime } from '../utils'
 import AppIcon from '../components/AppIcon.vue'
 import { buildTemplate } from '../segmentTemplate'
@@ -210,7 +210,7 @@ function splitAtCurrent() {
   const t = videoEl.value.currentTime
   const idx = segments.value.findIndex((s) => t > s.start && t < s.end)
   if (idx === -1) {
-    alert('当前时间不在任何动作段内')
+    showAlert({ message: '当前时间不在任何动作段内' })
     return
   }
   const seg = segments.value[idx]
@@ -224,7 +224,7 @@ function splitAtCurrent() {
 /** 删除指定段（合并到相邻段） */
 function removeSegment(i) {
   if (segments.value.length <= 1) {
-    alert('至少保留一个动作段')
+    showAlert({ message: '至少保留一个动作段' })
     return
   }
   const segs = segments.value
@@ -246,9 +246,14 @@ function removeSelected() {
 }
 
 /** 一键清除所有分段，恢复为整段（需用户确认，绝不自动清空） */
-function clearSegments() {
+async function clearSegments() {
   if (!segments.value.length) return
-  if (!confirm('确定清除所有分段？将恢复为整段视频，可重新切分。')) return
+  const ok = await showConfirm({
+    title: '清除所有分段',
+    message: '确定清除所有分段？将恢复为整段视频，可重新切分。',
+    danger: true,
+  })
+  if (!ok) return
   segments.value = [{ id: uid(), name: '动作 1', start: 0, end: duration.value }]
   selectedIndex.value = -1
 }
@@ -257,7 +262,7 @@ async function save() {
   if (saving.value) return
   const valid = segments.value.filter((s) => s.end - s.start > 0.5)
   if (!valid.length) {
-    alert('请先切分出一个有效动作段')
+    showAlert({ message: '请先切分出一个有效动作段' })
     return
   }
   // 按时间先后排序，并重编号「未命名」的动作名（用户自定义名保留）
@@ -275,7 +280,7 @@ async function save() {
   } catch (err) {
     console.error('保存失败', err)
     saving.value = false
-    alert('保存失败：' + (err.message || err))
+    showAlert({ title: '保存失败', message: err.message || err })
   }
 }
 

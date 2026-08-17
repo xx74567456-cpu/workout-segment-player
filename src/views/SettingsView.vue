@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { theme, toggleTheme, showToast } from '../store'
+import { theme, toggleTheme, showToast, showConfirm } from '../store'
 import { getAllVideos, getAllFolders, getAllCheckins, clearAllData } from '../db'
 import AppIcon from '../components/AppIcon.vue'
 
@@ -34,7 +34,12 @@ async function refreshUsage() {
 onMounted(refreshUsage)
 
 async function onClearAll() {
-  if (!confirm('确定清空全部数据（视频 / 文件夹 / 打卡）吗？此操作不可恢复，建议先导出备份。')) return
+  const ok = await showConfirm({
+    title: '清空全部数据',
+    message: '确定清空全部数据（视频 / 文件夹 / 打卡）吗？此操作不可恢复，建议先导出备份。',
+    danger: true,
+  })
+  if (!ok) return
   await clearAllData()
   await refreshUsage()
   showToast('已清空全部数据')
