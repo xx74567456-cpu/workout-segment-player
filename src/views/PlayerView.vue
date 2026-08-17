@@ -383,13 +383,6 @@ function onVolumeInput() {
   }
 }
 
-/** 判断视频是否为横屏（宽 > 高） */
-function videoIsLandscape() {
-  const v = videoEl.value
-  if (v && v.videoWidth && v.videoHeight) return v.videoWidth > v.videoHeight
-  return true
-}
-
 /** 判断当前设备是否为横屏 */
 function isLandscapeNow() {
   const o = window.screen && window.screen.orientation
@@ -419,16 +412,6 @@ function exitFullscreen() {
 function onOrientationChange() {
   if (isLandscapeNow()) enterFullscreen(false)
   else exitFullscreen()
-}
-
-/** 手动全屏按钮：竖屏设备上播放横屏视频时 CSS 旋转铺满，其余情况常规放大 */
-function toggleFullscreen() {
-  if (!isFullscreen.value) {
-    // 横屏视频 + 竖屏设备 → 旋转 90° 铺满；其余（竖屏视频或设备已横）不旋转
-    enterFullscreen(videoIsLandscape() && !isLandscapeNow())
-  } else {
-    exitFullscreen()
-  }
 }
 
 /** 核心循环逻辑：AB 循环 / 动作重复 / 组间休息 / 整组循环 */
@@ -809,7 +792,11 @@ onMounted(() => {
   videoId = video.value?.id || null
   if (videoId) {
     showHint.value = !hasShownHint(videoId)
-    if (showHint.value) markHintShown(videoId)
+    if (showHint.value) {
+      markHintShown(videoId)
+      // 首次打开新视频：提示关闭手机旋转锁定，让视频靠重力自动旋转全屏
+      showToast('请关闭手机旋转锁定，横屏时视频会自动旋转', 4000)
+    }
   }
   if (video.value?.blob) {
     url.value = URL.createObjectURL(video.value.blob)
@@ -906,19 +893,6 @@ onBeforeUnmount(() => {
               {{ hasSegments ? `动作 ${currentIndex + 1}/${segments.length} · ${currentSegment.name}` : '整段循环' }}
             </div>
           </div>
-          <button
-            class="icon-btn"
-            :aria-label="isFullscreen ? '退出全屏' : '全屏'"
-            @click="toggleFullscreen"
-          >
-            <svg class="fs-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <path
-                v-if="isFullscreen"
-                d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"
-              />
-              <path v-else d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
-            </svg>
-          </button>
           <div class="mic-wrap">
             <button
               class="icon-btn mic-btn"
@@ -1359,12 +1333,6 @@ onBeforeUnmount(() => {
 
 .settings-option.danger {
   color: var(--danger);
-}
-
-.fs-icon {
-  width: 18px;
-  height: 18px;
-  display: block;
 }
 
 .title {
