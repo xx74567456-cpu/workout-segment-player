@@ -1199,8 +1199,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   padding: 10px 14px;
   padding-top: calc(10px + env(safe-area-inset-top));
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(4px);
+  background: transparent;
   transition: opacity 0.25s ease;
 }
 
@@ -1214,7 +1213,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 6px 10px;
-  color: var(--text);
+  color: #fff;
 }
 
 /* 语音麦克风按钮：监听中高亮并呼吸闪烁，不支持时置灰 */
@@ -1315,7 +1314,7 @@ onBeforeUnmount(() => {
 
 .video-name {
   font-size: 14px;
-  color: var(--text-dim);
+  color: rgba(255, 255, 255, 0.85);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1369,12 +1368,11 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #000;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #fff;
   font-size: 13px;
   white-space: nowrap;
-  backdrop-filter: blur(4px);
 }
 
 .seg-chip.active {
@@ -1403,9 +1401,7 @@ onBeforeUnmount(() => {
 
 .seek-bar {
   padding: 10px 14px;
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 12px;
-  backdrop-filter: blur(4px);
+  background: transparent;
 }
 
 .seek-row {
@@ -1418,7 +1414,8 @@ onBeforeUnmount(() => {
   flex: 1;
   position: relative;
   height: 6px;
-  background: var(--border);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
   border-radius: 3px;
   cursor: pointer;
   /* 触摸拖动时禁止页面滚动/缩放，保证拖动流畅 */
@@ -1480,7 +1477,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   margin-top: 5px;
   font-size: 11px;
-  color: var(--text-dim);
+  color: rgba(255, 255, 255, 0.8);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1505,8 +1502,8 @@ onBeforeUnmount(() => {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.4);
-  color: var(--text);
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1567,7 +1564,7 @@ onBeforeUnmount(() => {
   height: 30px;
   border-radius: 999px;
   background: rgba(52, 211, 153, 0.28);
-  color: #000;
+  color: #fff;
 }
 
 .volume-menu {
@@ -1604,7 +1601,7 @@ onBeforeUnmount(() => {
   padding: 4px 10px;
   border-radius: 999px;
   background: rgba(52, 211, 153, 0.28);
-  color: #000;
+  color: #fff;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -1653,12 +1650,11 @@ onBeforeUnmount(() => {
   gap: 6px;
   font-size: 15px;
   font-weight: 600;
-  color: #000;
+  color: #fff;
   padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 12px;
-  backdrop-filter: blur(4px);
 }
 
 /* 提示主行：文字与自绘图标水平对齐 */
@@ -1680,7 +1676,7 @@ onBeforeUnmount(() => {
   gap: 4px;
   font-size: 13px;
   font-weight: 500;
-  color: rgba(0, 0, 0, 0.62);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 /* 训练进度文字（轮数 / 重复 / AB 循环） */
@@ -1701,11 +1697,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  background: rgba(255, 255, 255, 0.15);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 12px;
-  backdrop-filter: blur(4px);
-  color: #000;
+  color: #fff;
 }
 
 .ab-mark {
@@ -1727,8 +1722,8 @@ onBeforeUnmount(() => {
 .ab-clear {
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.2);
-  color: #000;
+  background: rgba(0, 0, 0, 0.25);
+  color: #fff;
   font-size: 12px;
 }
 
