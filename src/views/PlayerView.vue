@@ -471,6 +471,9 @@ function replaySegment() {
   const seg = currentSegment.value
   v.currentTime = seg ? seg.start : 0
   playReplayBeep()
+  // 视频自然播到结尾（ended）后已暂停，这里显式恢复播放；
+  // 正常循环场景下视频仍在播放，play() 是 no-op，无副作用
+  v.play().catch(() => {})
 }
 
 /** 当前动作练完：按「重复次数 → 休息 → 下一个动作 → 轮数」推进 */
@@ -525,6 +528,29 @@ function handleSegmentEnd() {
       }
       finish()
     }
+  }
+}
+
+/** 视频自然播放到结尾：timeupdate 在 currentTime 接近 duration 时可能不再触发，
+ *  导致最后一个片段（seg.end 等于视频时长）或整段的循环逻辑漏掉、停在结尾。
+ *  这里补一次循环处理，确保末尾片段也能正常重播。 */
+function handleVideoEnded() {
+  const v = videoEl.value
+  if (!v) return
+  if (dragging.value || resting.value) return
+  const seg = currentSegment.value
+  if (seg) {
+    if (autoAdvance.value) {
+      handleSegmentEnd()
+    } else {
+      v.currentTime = seg.start
+      playReplayBeep()
+      v.play().catch(() => {})
+    }
+  } else {
+    v.currentTime = 0
+    playReplayBeep()
+    v.play().catch(() => {})
   }
 }
 
@@ -825,6 +851,7 @@ onBeforeUnmount(() => {
           @timeupdate="onTimeUpdate"
           @play="playing = true"
           @pause="playing = false"
+          @ended="handleVideoEnded"
           @error="onVideoError"
           @click="onVideoClick"
         ></video>
