@@ -42,6 +42,7 @@ const volumeMenuOpen = ref(false)
 const duration = ref(0)
 const playerEl = ref(null)
 const isFullscreen = ref(false)
+const isRotated = ref(false) // 全屏时横屏视频是否需要 CSS 旋转 90° 铺满
 let orientationHandle = null // Capacitor 屏幕方向监听句柄（用于清理）
 const controlsVisible = ref(true)
 const segListEl = ref(null)
@@ -397,10 +398,11 @@ function isLandscapeNow() {
   return window.innerWidth > window.innerHeight
 }
 
-/** 进入沉浸式全屏：隐藏状态栏、视频铺满、控制条自动隐藏 */
-function enterFullscreen() {
-  if (isFullscreen.value) return
+/** 进入沉浸式全屏：隐藏状态栏、视频铺满、控制条自动隐藏。rotate 为 true 时 CSS 旋转 90°。
+ *  不设 early return，保证设备方向变化时能即时更新 isRotated（如竖屏旋转后把手机横过来）。 */
+function enterFullscreen(rotate) {
   isFullscreen.value = true
+  isRotated.value = rotate === true
   StatusBar.hide().catch(() => {})
   scheduleAutoHide()
 }
@@ -409,28 +411,23 @@ function enterFullscreen() {
 function exitFullscreen() {
   if (!isFullscreen.value) return
   isFullscreen.value = false
+  isRotated.value = false
   StatusBar.show().catch(() => {})
   scheduleAutoHide()
 }
 
-/** 重力旋转：横屏自动全屏、竖屏自动退出（跟随系统方向，不强制锁屏） */
+/** 重力旋转：设备横屏则视频自然铺满（无需 CSS 旋转），竖屏则退出全屏 */
 function onOrientationChange() {
-  if (isLandscapeNow()) enterFullscreen()
+  if (isLandscapeNow()) enterFullscreen(false)
   else exitFullscreen()
 }
 
-/** 手动全屏按钮：竖屏下点击强制锁横屏（竖屏视频锁竖屏）铺满，再点退出 */
-async function toggleFullscreen() {
+/** 手动全屏按钮：竖屏设备上播放横屏视频时 CSS 旋转铺满，其余情况常规放大 */
+function toggleFullscreen() {
   if (!isFullscreen.value) {
-    const landscape = videoIsLandscape()
-    try {
-      await ScreenOrientation.lock({ orientation: landscape ? 'landscape' : 'portrait' })
-    } catch {}
-    enterFullscreen()
+    // 横屏视频 + 竖屏设备 → 旋转 90° 铺满；其余（竖屏视频或设备已横）不旋转
+    enterFullscreen(videoIsLandscape() && !isLandscapeNow())
   } else {
-    try {
-      await ScreenOrientation.unlock()
-    } catch {}
     exitFullscreen()
   }
 }
@@ -814,7 +811,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="playerEl" class="player" :class="{ fullscreen: isFullscreen }" @click.self="onVideoClick">
+  <div ref="playerEl" class="player" :class="{ fullscreen: isFullscreen, rotated: isRotated }" @click.self="onVideoClick">
     <!-- 视频 -->
     <div ref="wrapEl" class="video-wrap">
       <div class="video-stage">
@@ -1141,6 +1138,18 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   color: var(--text);
+}
+
+/* 横屏视频在竖屏设备上全屏：把整个播放器旋转 90° 铺满屏幕（含控制条一起横过来） */
+.player.fullscreen.rotated {
+  top: 0;
+  left: 0;
+  right: auto;
+  bottom: auto;
+  width: 100vh;
+  height: 100vw;
+  transform: translateX(100vw) rotate(90deg);
+  transform-origin: top left;
 }
 
 .topbar {
