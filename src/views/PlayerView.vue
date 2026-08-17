@@ -1170,7 +1170,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: var(--bg);
+  background: #0d0f12;
   display: flex;
   flex-direction: column;
   color: var(--text);
