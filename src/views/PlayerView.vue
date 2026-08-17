@@ -748,6 +748,35 @@ watch(
   }
 )
 
+// ---------- 首次打开提示（导入后第一次打开才提示，之后打开旧视频不再提示） ----------
+
+const HINT_SHOWN_KEY = 'fit-segment:hint-shown'
+const showHint = ref(false)
+
+/** 该视频是否已提示过 */
+function hasShownHint(id) {
+  try {
+    const list = JSON.parse(localStorage.getItem(HINT_SHOWN_KEY))
+    return Array.isArray(list) && list.includes(id)
+  } catch {
+    return false
+  }
+}
+
+/** 标记该视频已提示过，下次打开不再重复提示 */
+function markHintShown(id) {
+  try {
+    const list = JSON.parse(localStorage.getItem(HINT_SHOWN_KEY))
+    const arr = Array.isArray(list) ? list : []
+    if (!arr.includes(id)) {
+      arr.push(id)
+      localStorage.setItem(HINT_SHOWN_KEY, JSON.stringify(arr))
+    }
+  } catch {
+    // localStorage 不可用时静默失败
+  }
+}
+
 // ---------- 播放记录（localStorage 轻量持久化） ----------
 
 function progressKey(id) {
@@ -779,6 +808,10 @@ function saveProgress() {
 
 onMounted(() => {
   videoId = video.value?.id || null
+  if (videoId) {
+    showHint.value = !hasShownHint(videoId)
+    if (showHint.value) markHintShown(videoId)
+  }
   if (video.value?.blob) {
     url.value = URL.createObjectURL(video.value.blob)
     // 等视频可播放后记录时长并定位到第一段
@@ -887,19 +920,25 @@ onBeforeUnmount(() => {
               <path v-else d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" />
             </svg>
           </button>
-          <button
-            class="icon-btn mic-btn"
-            :class="{ active: voiceListening, off: !voiceSupported }"
-            :disabled="!voiceSupported"
-            :aria-label="voiceListening ? '关闭语音' : '开启语音'"
-            :title="voiceListening ? '语音监听中，点击关闭' : '开启语音控制'"
-            @click="toggleVoice"
-          >
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
-              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-            </svg>
-          </button>
+          <div class="mic-wrap">
+            <button
+              class="icon-btn mic-btn"
+              :class="{ active: voiceListening, off: !voiceSupported }"
+              :disabled="!voiceSupported"
+              :aria-label="voiceListening ? '关闭语音' : '开启语音'"
+              :title="voiceListening ? '语音监听中，点击关闭' : '开启语音控制'"
+              @click="toggleVoice"
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+              </svg>
+            </button>
+            <div v-if="voiceSupported && showHint" class="voice-hint">
+              <AppIcon name="mic" :size="13" class="hint-icon" />
+              <span>{{ voiceListening ? '语音控制中：前进 / 后退 / 暂停' : '点麦克风按钮开启语音控制' }}</span>
+            </div>
+          </div>
           <button class="icon-btn" aria-label="打卡" @click="finish">
         <span class="checkin-pill">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" fill-rule="evenodd" aria-hidden="true">
@@ -923,16 +962,12 @@ onBeforeUnmount(() => {
 
         <!-- 底部覆盖层：动作选择 + 进度条，随控制条一起呼出/消失 -->
         <div class="video-overlay" :class="{ hidden: !controlsVisible }">
-          <p class="hint">
+          <p v-if="showHint" class="hint">
             <span v-if="hasSegments" class="hint-line">
               <template v-if="currentIndex === segments.length - 1">最后一个动作，练完点打卡</template>
               <template v-else>练完点<AppIcon name="next" :size="16" class="hint-icon" />切下一个动作</template>
             </span>
             <span v-else class="hint-line">单击显示进度条，双击播放/暂停</span>
-            <span v-if="voiceSupported" class="hint-voice">
-              <AppIcon name="mic" :size="13" class="hint-icon" />
-              <span>{{ voiceListening ? '语音控制中：前进 / 后退 / 暂停' : '点麦克风按钮开启语音控制' }}</span>
-            </span>
           </p>
           <p v-if="trainInfo" class="train-progress">{{ trainInfo }}</p>
           <div v-if="train.abEnabled" class="ab-bar">
@@ -1214,6 +1249,33 @@ onBeforeUnmount(() => {
   justify-content: center;
   padding: 6px 10px;
   color: #fff;
+}
+
+/* 麦克风按钮容器：用于在其正下方定位语音控制提示 */
+.mic-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 语音控制提示：悬浮在麦克风按钮正下方，首次打开时提示 */
+.voice-hint {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+  padding: 5px 10px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  z-index: 20;
 }
 
 /* 语音麦克风按钮：监听中高亮并呼吸闪烁，不支持时置灰 */
@@ -1667,16 +1729,6 @@ onBeforeUnmount(() => {
 /* 内联在提示文字里的自绘图标 */
 .hint-icon {
   flex-shrink: 0;
-}
-
-/* 语音控制提示行：弱化为次要信息，区分主次 */
-.hint-voice {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.8);
 }
 
 /* 训练进度文字（轮数 / 重复 / AB 循环） */
