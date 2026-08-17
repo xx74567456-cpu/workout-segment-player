@@ -199,8 +199,7 @@ const hasSegments = computed(() => segments.value.length > 0)
 const trainInfo = computed(() => {
   const parts = []
   if (train.roundCount > 1) parts.push(`第 ${currentRound.value}/${train.roundCount} 轮`)
-  if (train.repeatTimes === 0) parts.push('无限循环')
-  else if (train.repeatTimes > 1) parts.push(`重复 ${currentRepeat.value}/${train.repeatTimes}`)
+  if (train.repeatTimes > 1) parts.push(`重复 ${currentRepeat.value}/${train.repeatTimes}`)
   if (train.abEnabled && abStart.value != null && abEnd.value != null) parts.push('AB 循环')
   return parts.join(' · ')
 })
