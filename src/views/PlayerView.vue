@@ -875,13 +875,15 @@ onBeforeUnmount(() => {
         <!-- 底部覆盖层：动作选择 + 进度条，随控制条一起呼出/消失 -->
         <div class="video-overlay" :class="{ hidden: !controlsVisible }">
           <p class="hint">
-            {{
-              hasSegments
-                ? currentIndex === segments.length - 1
-                  ? '最后一个动作，练完点打卡'
-                  : '练完点 ⏭ 切下一个动作'
-                : '单击显示进度条，双击播放/暂停'
-            }}
+            <span v-if="hasSegments" class="hint-line">
+              <template v-if="currentIndex === segments.length - 1">最后一个动作，练完点打卡</template>
+              <template v-else>练完点<AppIcon name="next" :size="16" class="hint-icon" />切下一个动作</template>
+            </span>
+            <span v-else class="hint-line">单击显示进度条，双击播放/暂停</span>
+            <span v-if="voiceSupported" class="hint-voice">
+              <AppIcon name="mic" :size="13" class="hint-icon" />
+              <span>{{ voiceListening ? '语音控制中：前进 / 后退 / 暂停' : '点麦克风按钮开启语音控制' }}</span>
+            </span>
           </p>
           <p v-if="trainInfo" class="train-progress">{{ trainInfo }}</p>
           <div v-if="train.abEnabled" class="ab-bar">
@@ -1584,7 +1586,10 @@ onBeforeUnmount(() => {
 .hint {
   align-self: flex-start;
   width: fit-content;
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   font-size: 15px;
   font-weight: 600;
   color: #000;
@@ -1593,6 +1598,28 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 12px;
   backdrop-filter: blur(4px);
+}
+
+/* 提示主行：文字与自绘图标水平对齐 */
+.hint-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 内联在提示文字里的自绘图标 */
+.hint-icon {
+  flex-shrink: 0;
+}
+
+/* 语音控制提示行：弱化为次要信息，区分主次 */
+.hint-voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(0, 0, 0, 0.62);
 }
 
 /* 训练进度文字（轮数 / 重复 / AB 循环） */
