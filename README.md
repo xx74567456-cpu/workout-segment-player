@@ -35,4 +35,12 @@ npm run build:android  # 构建安卓（base 相对路径）
 
 ## 📄 开源许可
 
-[MIT License](LICENSE)
+Copyright © 2026 xx74567456-cpu
+
+本项目采用 [知识共享 署名-非商业性使用-相同方式共享 4.0 国际许可证（CC BY-NC-SA 4.0）](LICENSE) 授权。
+
+- ✅ **允许**：分享、复制、改编、再分发
+- ⚠️ **要求**：署名（注明原作者）、相同方式共享（衍生作品须用相同许可）
+- ❌ **禁止**：未经作者书面许可的**商业性使用**
+
+许可协议全文：<https://creativecommons.org/licenses/by-nc-sa/4.0/>
