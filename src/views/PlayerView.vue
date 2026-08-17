@@ -244,6 +244,7 @@ function onVideoError() {
 
 let clickTimer = null
 let hideTimer = null
+let volumeMenuTimer = null
 
 /** 单击/双击区分：单击切换控制条显隐，双击播放/暂停 */
 function onVideoClick() {
@@ -274,6 +275,14 @@ function scheduleAutoHide() {
   hideTimer = setTimeout(() => {
     controlsVisible.value = false
   }, 5000)
+}
+
+/** 音量菜单比控制条更快自动关闭（4 秒），避免百分比数字一直停在屏幕上 */
+function scheduleVolumeMenuClose() {
+  if (volumeMenuTimer) clearTimeout(volumeMenuTimer)
+  volumeMenuTimer = setTimeout(() => {
+    volumeMenuOpen.value = false
+  }, 4000)
 }
 
 /** 跳转到指定时间点（有分段时自动定位到所在片段） */
@@ -347,6 +356,11 @@ function toggleRateMenu() {
 
 function toggleVolumeMenu() {
   volumeMenuOpen.value = !volumeMenuOpen.value
+  if (volumeMenuOpen.value) {
+    scheduleVolumeMenuClose()
+  } else if (volumeMenuTimer) {
+    clearTimeout(volumeMenuTimer)
+  }
   scheduleAutoHide()
 }
 
@@ -358,9 +372,10 @@ function applyVolume() {
   v.muted = volume.value === 0
 }
 
-/** 拖动音量滑块时实时应用到视频，并记忆到 localStorage */
+/** 拖动音量滑块时实时应用到视频，并记忆到 localStorage；每次调整都重置自动关闭计时 */
 function onVolumeInput() {
   applyVolume()
+  scheduleVolumeMenuClose()
   try {
     localStorage.setItem(VOLUME_KEY, String(volume.value))
   } catch {
@@ -788,6 +803,7 @@ onBeforeUnmount(() => {
   if (url.value) URL.revokeObjectURL(url.value)
   if (clickTimer) clearTimeout(clickTimer)
   if (hideTimer) clearTimeout(hideTimer)
+  if (volumeMenuTimer) clearTimeout(volumeMenuTimer)
   if (orientationHandle) orientationHandle.remove()
   window.removeEventListener('resize', onOrientationChange)
   if (window.screen && window.screen.orientation && window.screen.orientation.removeEventListener) {
