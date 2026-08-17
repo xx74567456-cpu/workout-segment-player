@@ -44,12 +44,19 @@ export function useVoiceControl() {
   let lastCmd = null
   let lastCmdAt = 0
 
+  // 启动互斥：原生端在 await 权限/可用性检查期间 isListening 尚未置 true，
+  // 快速连点会开出多条识别循环，用 starting 标记挡住并发启动
+  let starting = false
+
   /** 命中命令后回调（去重 + 防抖的统一出口） */
   function dispatch(text, cmd) {
     if (!cmd) cmd = matchCommand(text)
     if (!cmd || !commandCb) return
     const now = Date.now()
-    if (cmd === lastCmd && now - lastCmdAt < 800) return
+    // 冷却窗口：中间结果（interim）与最终结果（final）对同一句话会先后各命中一次，
+    // 间隔常在 0.5~2 秒；原生端同段语音也可能被识别器重复返回。3 秒冷却能覆盖这些重复，
+    // 而跟练场景下用户不会在 3 秒内连续下达同一命令，不影响体验。
+    if (cmd === lastCmd && now - lastCmdAt < 3000) return
     lastCmd = cmd
     lastCmdAt = now
     commandCb(cmd)
@@ -153,7 +160,8 @@ export function useVoiceControl() {
         for (const m of matches) {
           const cmd = matchCommand(m)
           if (cmd) {
-            if (commandCb) commandCb(cmd)
+            // 统一走 dispatch，让原生端也享受同一套冷却去重，避免一段语音被识别器重复返回时执行多遍
+            dispatch(m, cmd)
             break
           }
         }
@@ -167,41 +175,46 @@ export function useVoiceControl() {
   }
 
   async function start() {
-    if (isListening.value) return
-    if (isNative) {
-      try {
-        const avail = await NativeSpeechRecognition.available()
-        if (!avail.available) {
-          error.value = '设备不支持语音识别'
+    if (isListening.value || starting) return
+    starting = true
+    try {
+      if (isNative) {
+        try {
+          const avail = await NativeSpeechRecognition.available()
+          if (!avail.available) {
+            error.value = '设备不支持语音识别'
+            return
+          }
+          const perm = await NativeSpeechRecognition.requestPermissions()
+          if (perm.speechRecognition !== 'granted') {
+            error.value = '未授权麦克风权限'
+            return
+          }
+        } catch {
+          error.value = '语音初始化失败'
           return
         }
-        const perm = await NativeSpeechRecognition.requestPermissions()
-        if (perm.speechRecognition !== 'granted') {
-          error.value = '未授权麦克风权限'
-          return
-        }
-      } catch {
-        error.value = '语音初始化失败'
-        return
-      }
-      isListening.value = true
-      nativeLoop()
-    } else {
-      if (!webRecognition && !initWeb()) {
-        error.value = '浏览器不支持语音识别'
-        return
-      }
-      try {
-        webRecognition.start()
         isListening.value = true
-      } catch (err) {
-        // 启动失败（如上次会话未完全结束）：不误设为监听中，提示稍后重试
-        console.error('语音启动失败', err)
-        error.value = '语音启动失败，请稍后重试'
-        isListening.value = false
+        nativeLoop()
+      } else {
+        if (!webRecognition && !initWeb()) {
+          error.value = '浏览器不支持语音识别'
+          return
+        }
+        try {
+          webRecognition.start()
+          isListening.value = true
+        } catch (err) {
+          // 启动失败（如上次会话未完全结束）：不误设为监听中，提示稍后重试
+          console.error('语音启动失败', err)
+          error.value = '语音启动失败，请稍后重试'
+          isListening.value = false
+        }
       }
+      error.value = ''
+    } finally {
+      starting = false
     }
-    error.value = ''
   }
 
   function stop() {
