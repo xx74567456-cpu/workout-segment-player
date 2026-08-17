@@ -680,27 +680,14 @@ function handleVoiceCommand(cmd) {
   scheduleAutoHide()
 }
 
-// 语音开启前的音量：语音识别期间临时调低视频音量、关闭时恢复，
-// 减少视频背景音被麦克风拾取导致的误识别（非静音，只是变小声）
-let volumeBeforeVoice = null
-
-/** 顶栏麦克风按钮：手动开关持续监听 */
+/** 顶栏麦克风按钮：手动开关持续监听（不改变视频音量） */
 async function toggleVoice() {
   if (voice.isListening.value) {
     voice.stop()
-    if (volumeBeforeVoice !== null) {
-      volume.value = volumeBeforeVoice
-      applyVolume()
-      volumeBeforeVoice = null
-    }
     showToast('语音已关闭')
   } else {
     await voice.start()
-    // 仅当语音真正开启成功时才降低视频音量，避免启动失败时音量被误降
     if (voice.isListening.value) {
-      volumeBeforeVoice = volume.value
-      volume.value = Math.min(volume.value, 0.4)
-      applyVolume()
       showToast('语音已开启')
     }
   }
